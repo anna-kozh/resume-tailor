@@ -5,8 +5,6 @@
 
 [functions]
   node_bundler = "esbuild"
-  # Increase function timeout to 26 seconds (default is 10s)
-  timeout = 26
 
 [[redirects]]
   from = "/*"
