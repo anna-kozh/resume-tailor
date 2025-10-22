@@ -1,4 +1,4 @@
-// src/components/ResumeEditor.js
+// src/components/ResumeEditor.jsx
 import React, { useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
@@ -7,7 +7,8 @@ import { highlightField, setHighlights } from "./HighlightExtension";
 function ResumeEditor({
   value,
   onChange,
-  keywords = [],
+  appliedKeywords = [], // Array of applied keywords with their text
+  currentHighlight = null, // { lineIndex, text } for yellow highlighting
   className = "",
 }) {
   const viewRef = useRef(null);
@@ -15,7 +16,7 @@ function ResumeEditor({
   const extensions = useMemo(
     () => [
       EditorView.lineWrapping,
-      highlightField(keywords),
+      highlightField(appliedKeywords, currentHighlight),
       EditorView.updateListener.of((v) => {
         if (v.docChanged) onChange(v.state.doc.toString());
       }),
@@ -31,15 +32,20 @@ function ResumeEditor({
         ".cm-line": { whiteSpace: "pre-wrap" },
       }),
     ],
-    [onChange, keywords]
+    [onChange, appliedKeywords, currentHighlight]
   );
 
-  // Push new keywords when prop changes
+  // Push new highlights when props change
   useEffect(() => {
     const view = viewRef.current?.view;
     if (!view) return;
-    view.dispatch({ effects: setHighlights.of(keywords || []) });
-  }, [keywords]);
+    view.dispatch({ 
+      effects: setHighlights.of({ 
+        appliedKeywords: appliedKeywords || [], 
+        currentHighlight: currentHighlight 
+      }) 
+    });
+  }, [appliedKeywords, currentHighlight]);
 
   return (
     <div className={className}>

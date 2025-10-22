@@ -19,8 +19,10 @@ const App = () => {
   const [currentGapIndex, setCurrentGapIndex] = useState(0);
   const [suggestedSentence, setSuggestedSentence] = useState('');
   const [addedKeywords, setAddedKeywords] = useState([]);
+  const [appliedKeywords, setAppliedKeywords] = useState([]); // Track applied keywords for green highlighting
   const [generatingSuggestion, setGeneratingSuggestion] = useState(false);
   const [suggestedLocation, setSuggestedLocation] = useState(null); // { lineStart, lineEnd, text }
+  const [currentHighlight, setCurrentHighlight] = useState(null); // For yellow highlighting
 
   // Field-level errors for red borders + messages
   const [resumeFieldError, setResumeFieldError] = useState('');
@@ -155,6 +157,7 @@ const App = () => {
       setEditableResume(resume.text); // Initialize editable resume
       setCurrentGapIndex(0);
       setAddedKeywords([]);
+      setAppliedKeywords([]); // Reset applied keywords
       setCurrentView('results');
       
       // Find location for first keyword if there are missing keywords
@@ -198,486 +201,365 @@ const App = () => {
       }
 
       const data = await response.json();
-      
-      if (!data.text) {
-        throw new Error('No optimized resume text received');
-      }
-      
       setOptimizedResume(data);
-      setAnalysis({ 
-        ...analysis, 
-        overall_score: data.newScore || analysis.overall_score + 20, 
-        match_strength: (data.newScore || analysis.overall_score + 20) >= 71 ? 'strong' : 'moderate' 
-      });
       setCurrentView('comparison');
     } catch (err) {
       console.error('Optimization error:', err);
-      setError('Optimization failed. Please try again. Error: ' + err.message);
+      setError('Optimization failed. Please try again.');
       setCurrentView('results');
     } finally {
       setLoading(false);
     }
   };
 
-  const getMatchStrength = (score) => {
-    if (score >= 91) return { color: 'text-purple-600', bg: 'bg-purple-50', label: '⭐ EXCEPTIONAL MATCH' };
-    if (score >= 71) return { color: 'text-green-600', bg: 'bg-green-50', label: '🟢 STRONG MATCH' };
-    if (score >= 41) return { color: 'text-amber-600', bg: 'bg-amber-50', label: '🟡 MODERATE MATCH' };
-    return { color: 'text-red-600', bg: 'bg-red-50', label: '🔴 WEAK MATCH' };
+  const downloadResume = () => {
+    const blob = new Blob([optimizedResume.text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'optimized-resume.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  const downloadResume = (e) => {
-    if (e) e.preventDefault();
-    
-    const element = document.createElement('a');
-    const file = new Blob([optimizedResume.text], { type: 'text/plain' });
-    element.href = URL.createObjectURL(file);
-    element.download = `Resume_Optimized_${new Date().toISOString().split('T')[0]}.txt`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
-
-  const resetApp = (e) => {
-    if (e) e.preventDefault();
-    
+  const resetApp = () => {
     setCurrentView('input');
-    // Keep resume and JD pre-filled
+    setResume({ text: '', filename: '' });
+    setResumeInput('');
+    setEditableResume('');
+    setJobDescription('');
     setAnalysis(null);
     setOptimizedResume({ text: '', changes: [] });
     setSelectedGaps([]);
-    setShowAllGaps(false);
-    setExpandedGaps({});
     setError('');
     setCurrentGapIndex(0);
-    setAddedKeywords([]);
     setSuggestedSentence('');
-    // clear field errors
+    setAddedKeywords([]);
+    setAppliedKeywords([]);
+    setSuggestedLocation(null);
+    setCurrentHighlight(null);
     setResumeFieldError('');
     setJdFieldError('');
   };
 
-  const findBestLocationForKeyword = (keyword, currentResume) => {
+  const toggleGapExpanded = (index) => {
+    setExpandedGaps(prev => ({
+      ...prev,
+      [index]: !prev[index]
+    }));
+  };
+
+  const getMatchStrength = (score) => {
+    if (score >= 90) return { label: 'Excellent Match', color: 'text-green-600' };
+    if (score >= 80) return { label: 'Strong Match', color: 'text-blue-600' };
+    if (score >= 70) return { label: 'Good Match', color: 'text-yellow-600' };
+    if (score >= 60) return { label: 'Fair Match', color: 'text-orange-600' };
+    return { label: 'Weak Match', color: 'text-red-600' };
+  };
+
+  // Get confidence level from keyword
+  const getConfidenceLevel = (keyword) => {
+    const confidence = keyword.confidence || 0;
+    if (confidence >= 0.9) return { level: 'high', label: 'High confidence', color: 'bg-green-100 text-green-800', icon: '🟢' };
+    if (confidence >= 0.7) return { level: 'medium', label: 'Medium confidence', color: 'bg-yellow-100 text-yellow-800', icon: '🟡' };
+    return { level: 'low', label: 'Low confidence', color: 'bg-orange-100 text-orange-800', icon: '🟠' };
+  };
+
+  // Find best location for keyword in resume
+  const findBestLocationForKeyword = (keyword, resumeText) => {
     const keywordText = typeof keyword === 'string' ? keyword : keyword.keyword;
-    const lines = currentResume.split('\n');
+    const lines = resumeText.split('\n');
     
-    // Look for relevant sections: Experience, Skills, or last bullet point in recent role
-    let bestMatch = null;
+    // Find the most relevant line (simple heuristic: look for related terms)
+    const searchTerms = keywordText.toLowerCase().split(/\s+/);
+    let bestLineIndex = -1;
     let bestScore = 0;
-    
-    // Search for experience section or recent roles
-    const experienceKeywords = ['experience', 'work', 'freelance', 'designer', 'lead', 'senior'];
-    const aiKeywords = ['ai', 'design', 'product', 'ux', 'user'];
-    
+
     lines.forEach((line, index) => {
       const lowerLine = line.toLowerCase();
-      let score = 0;
-      
-      // Prioritize lines with bullets
-      if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
-        score += 2;
-      }
-      
-      // Prioritize experience-related lines
-      experienceKeywords.forEach(kw => {
-        if (lowerLine.includes(kw)) score += 1;
-      });
-      
-      // Prioritize AI/design related lines
-      aiKeywords.forEach(kw => {
-        if (lowerLine.includes(kw)) score += 1;
-      });
-      
-      // Prefer lines with some content (not headers)
-      if (line.length > 40) score += 1;
-      
+      const score = searchTerms.filter(term => lowerLine.includes(term)).length;
       if (score > bestScore) {
         bestScore = score;
-        bestMatch = { lineIndex: index, text: line };
+        bestLineIndex = index;
       }
     });
-    
-    setSuggestedLocation(bestMatch);
-  };
 
-  const handleAddKeywordAtLocation = () => {
-    if (!suggestedLocation) return;
-    
-    const lines = editableResume.split('\n');
-    const currentKeyword = analysis.keyword_coverage.missing_keywords[currentGapIndex];
-    const keywordText = typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword;
-    
-    // Add keyword to the suggested line
-    const lineIndex = suggestedLocation.lineIndex;
-    const originalLine = lines[lineIndex];
-    
-    // Add keyword at the end of the line (before any period)
-    let newLine = originalLine.trim();
-    if (newLine.endsWith('.')) {
-      newLine = newLine.slice(0, -1) + `, incorporating ${keywordText}.`;
-    } else {
-      newLine = newLine + `, incorporating ${keywordText}`;
+    // If no match found, suggest adding to professional summary or first section
+    if (bestLineIndex === -1) {
+      const summaryIndex = lines.findIndex(line => 
+        /summary|profile|about|objective/i.test(line)
+      );
+      bestLineIndex = summaryIndex >= 0 ? summaryIndex + 1 : 2;
     }
-    
-    lines[lineIndex] = newLine;
-    const newResume = lines.join('\n');
-    
-    setEditableResume(newResume);
-    setAddedKeywords([...addedKeywords, keywordText]);
-    
-    handleSkipKeyword();
+
+    setSuggestedLocation({
+      lineIndex: bestLineIndex,
+      text: lines[bestLineIndex] || 'Beginning of resume'
+    });
+
+    // Set yellow highlight for current suggestion
+    setCurrentHighlight({
+      lineIndex: bestLineIndex,
+      text: lines[bestLineIndex] || ''
+    });
   };
 
+  // Handle applying keyword manually
   const handleAddKeywordManually = () => {
-    // Use the editable suggestion text
-    const textToAdd = suggestedSentence || '';
-    if (!textToAdd.trim()) return;
+    if (!suggestedSentence.trim() || !suggestedLocation) return;
+
+    const lines = editableResume.split('\n');
+    const insertIndex = suggestedLocation.lineIndex;
     
+    // Insert the suggested sentence
+    lines.splice(insertIndex + 1, 0, suggestedSentence.trim());
+    const updatedResume = lines.join('\n');
+    
+    setEditableResume(updatedResume);
+    
+    // Add to applied keywords for green highlighting
     const currentKeyword = analysis.keyword_coverage.missing_keywords[currentGapIndex];
     const keywordText = typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword;
+    setAppliedKeywords(prev => [...prev, { keyword: keywordText, text: suggestedSentence.trim() }]);
     
-    // Check if there's a Skills section
-    if (editableResume.toLowerCase().includes('skills')) {
-      const lines = editableResume.split('\n');
-      let skillsIndex = -1;
-      
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].toLowerCase().includes('skills')) {
-          skillsIndex = i;
-          break;
-        }
-      }
-      
-      if (skillsIndex !== -1 && skillsIndex + 1 < lines.length) {
-        // Add to skills section
-        lines[skillsIndex + 1] = lines[skillsIndex + 1].trim() + `, ${textToAdd}`;
-        setEditableResume(lines.join('\n'));
-      }
-    } else {
-      // Add as new entry at the end
-      setEditableResume(editableResume.trim() + `\n\nSKILLS:\n${textToAdd}`);
-    }
-    
-    setAddedKeywords([...addedKeywords, keywordText]);
-    handleSkipKeyword();
+    // Move to next suggestion
+    handleNextKeyword();
   };
 
+  // Handle skipping keyword
   const handleSkipKeyword = () => {
+    handleNextKeyword();
+  };
+
+  // Move to next keyword
+  const handleNextKeyword = () => {
+    const missingKeywords = analysis.keyword_coverage?.missing_keywords || [];
     const nextIndex = currentGapIndex + 1;
     
-    if (nextIndex < analysis.keyword_coverage.missing_keywords.length) {
+    if (nextIndex < missingKeywords.length) {
       setCurrentGapIndex(nextIndex);
-      const nextKeyword = analysis.keyword_coverage.missing_keywords[nextIndex];
-      const nextKeywordText = typeof nextKeyword === 'string' ? nextKeyword : nextKeyword.keyword;
-      setSuggestedSentence(nextKeywordText); // Initialize suggestion for next keyword
+      const nextKeyword = missingKeywords[nextIndex];
+      const keywordText = typeof nextKeyword === 'string' ? nextKeyword : nextKeyword.keyword;
+      setSuggestedSentence(keywordText);
       findBestLocationForKeyword(nextKeyword, editableResume);
     } else {
-      setCurrentGapIndex(nextIndex);
-      setSuggestedLocation(null);
-      setSuggestedSentence('');
+      // All done
+      setCurrentHighlight(null);
     }
   };
 
-  const handleResumeEdit = (e) => {
-    setEditableResume(e.target.value);
-  };
-
-  const handleContentEditableChange = (e) => {
-    const text = e.target.innerText;
-    setEditableResume(text);
-  };
-
-  const recalculateKeywords = () => {
-    if (!analysis || !editableResume) return;
-    
-    const matched = analysis.keyword_coverage.matched_keywords.filter(kw => {
-      const keyword = typeof kw === 'string' ? kw : kw.keyword;
-      return editableResume.toLowerCase().includes(keyword.toLowerCase());
-    });
-    
-    const nowMatched = analysis.keyword_coverage.missing_keywords.filter(kw => {
-      const keyword = typeof kw === 'string' ? kw : kw.keyword;
-      return editableResume.toLowerCase().includes(keyword.toLowerCase());
-    });
-    
-    return {
-      matched: [...matched, ...nowMatched],
-      total: analysis.keyword_coverage.matched_keywords.length + 
-             analysis.keyword_coverage.missing_keywords.length
-    };
-  };
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(editableResume);
-    alert('Resume copied to clipboard!');
-  };
-
-  const highlightKeywords = (text) => {
-    if (!analysis) return text;
-    
-    let highlighted = text;
-    const allMatchedKeywords = [
-      ...(analysis.keyword_coverage.matched_keywords || []),
-      ...addedKeywords
-    ];
-    
-    allMatchedKeywords.forEach(kw => {
-      const keyword = typeof kw === 'string' ? kw : kw.keyword;
-      const regex = new RegExp(`(${keyword})`, 'gi');
-      highlighted = highlighted.replace(regex, '<mark class="bg-green-200">$1</mark>');
-    });
-    
-    return highlighted;
-  };
-
+  // INPUT VIEW
   if (currentView === 'input') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-12 px-4">
-        <div className="max-w-4xl mx-auto space-y-8">
-          <div className="text-center space-y-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-              <Sparkles className="w-8 h-8 text-blue-600" />
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-8">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Sparkles className="w-10 h-10 text-blue-600" />
+              <h1 className="text-4xl font-bold text-gray-900">Resume Tailor</h1>
             </div>
-            <h1 className="text-4xl font-bold text-gray-900">Resume Tailor</h1>
-            <p className="text-xl text-gray-600">Optimize your resume with AI-powered keyword matching</p>
+            <p className="text-lg text-gray-600">
+              Optimize your resume with AI-powered keyword matching
+            </p>
           </div>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <p className="text-red-800">{error}</p>
-            </div>
-          )}
-
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 space-y-6">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <label className="block text-sm font-semibold text-gray-700">
+          <form onSubmit={analyzeResume} className="space-y-6">
+            <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-8">
+              <div className="mb-6">
+                <label className="block text-lg font-semibold text-gray-900 mb-4">
                   Your Resume
                 </label>
-                <div className="flex gap-2">
+
+                <div className="flex gap-2 mb-4">
                   <button
                     type="button"
-                    onClick={() => { setInputMethod('paste'); setResumeFieldError(''); }}
-                    className={`py-1.5 px-4 text-sm rounded-lg font-medium transition-colors ${
+                    onClick={() => setInputMethod('paste')}
+                    className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
                       inputMethod === 'paste'
                         ? 'bg-blue-600 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    ✏️ Paste
+                    Paste Text
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setInputMethod('upload'); setResumeFieldError(''); }}
-                    className={`py-1.5 px-4 text-sm rounded-lg font-medium transition-colors ${
+                    onClick={() => setInputMethod('upload')}
+                    className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
                       inputMethod === 'upload'
                         ? 'bg-blue-600 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    📁 Upload
+                    Upload File
                   </button>
                 </div>
+
+                {inputMethod === 'paste' ? (
+                  <div>
+                    <textarea
+                      value={resumeInput}
+                      onChange={handleResumeTextChange}
+                      placeholder="Paste your resume text here..."
+                      className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none ${
+                        resumeFieldError ? 'border-red-500' : 'border-gray-300'
+                      }`}
+                      rows={12}
+                    />
+                    {resumeFieldError && (
+                      <p className="mt-2 text-sm text-red-600">{resumeFieldError}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <label className={`flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-lg cursor-pointer hover:bg-gray-50 transition-colors ${
+                      resumeFieldError ? 'border-red-500 bg-red-50' : 'border-gray-300 bg-gray-50'
+                    }`}>
+                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                        <Upload className={`w-10 h-10 mb-3 ${resumeFieldError ? 'text-red-500' : 'text-gray-400'}`} />
+                        <p className="mb-2 text-sm text-gray-500">
+                          <span className="font-semibold">Click to upload</span> or drag and drop
+                        </p>
+                        <p className="text-xs text-gray-500">Plain text files only (MAX. 5MB)</p>
+                      </div>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept=".txt"
+                        onChange={handleFileUpload}
+                      />
+                    </label>
+                    {resume.filename && (
+                      <p className="mt-2 text-sm text-green-600">
+                        ✓ Loaded: {resume.filename}
+                      </p>
+                    )}
+                    {resumeFieldError && (
+                      <p className="mt-2 text-sm text-red-600">{resumeFieldError}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {inputMethod === 'paste' && (
-                <div>
-                  <textarea
-                    value={resumeInput}
-                    onChange={handleResumeTextChange}
-                    placeholder="Paste your resume text here...
+              <div>
+                <label className="block text-lg font-semibold text-gray-900 mb-4">
+                  Job Description
+                </label>
+                <textarea
+                  value={jobDescription}
+                  onChange={(e) => {
+                    setJobDescription(e.target.value);
+                    if (e.target.value && jdFieldError) setJdFieldError('');
+                  }}
+                  placeholder="Paste the job description here..."
+                  className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none ${
+                    jdFieldError ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                  rows={12}
+                />
+                {jdFieldError && (
+                  <p className="mt-2 text-sm text-red-600">{jdFieldError}</p>
+                )}
+                <p className="mt-2 text-sm text-gray-500">
+                  Minimum 200 characters
+                </p>
+              </div>
+            </div>
 
-Include your name, contact info, work experience, education, and skills."
-                    className={`w-full h-96 px-4 py-3 border ${resumeFieldError ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'} rounded-lg focus:ring-2 focus:border-transparent resize-none font-mono text-sm`}
-                  />
-                  {/* Removed characters count and Ready label */}
-                  {resumeFieldError ? (
-                    <p className="text-sm text-red-600 mt-2">This field is required</p>
-                  ) : null}
-                </div>
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-800">{error}</p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5" />
+                  Analyze Resume
+                </>
               )}
-
-              {inputMethod === 'upload' && (
-                <div>
-                  <div className={`border-2 border-dashed ${resumeFieldError ? 'border-red-500' : 'border-gray-300'} rounded-lg p-8 text-center hover:border-blue-400 transition-colors`}>
-                    <input
-                      type="file"
-                      onChange={handleFileUpload}
-                      accept=".txt,text/plain"
-                      className="hidden"
-                      id="resume-upload"
-                    />
-                    <label htmlFor="resume-upload" className="cursor-pointer">
-                      <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                      <p className="text-sm text-gray-600 font-medium">
-                        {resume.filename && resume.filename !== 'pasted-resume.txt' 
-                          ? resume.filename 
-                          : 'Click to upload or drag and drop'}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-2">Plain text (.txt) only • Max 5MB</p>
-                    </label>
-                  </div>
-                  {resume.filename && resume.filename !== 'pasted-resume.txt' && (
-                    <div className="mt-3 flex items-center gap-2 text-sm text-green-600">
-                      <CheckCircle className="w-4 h-4" />
-                      <span>Uploaded: {resume.filename}</span>
-                    </div>
-                  )}
-                  {resumeFieldError ? (
-                    <p className="text-sm text-red-600 mt-2">This field is required</p>
-                  ) : null}
-                  
-                  <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <p className="text-xs font-semibold text-blue-900 mb-1">💡 How to convert to plain text:</p>
-                    <ul className="text-xs text-blue-800 space-y-1 ml-4">
-                      <li>• <strong>Mac:</strong> TextEdit → Format → Make Plain Text</li>
-                      <li>• <strong>Windows:</strong> Word → Save As → Plain Text (.txt)</li>
-                      <li>• <strong>Google Docs:</strong> File → Download → Plain Text (.txt)</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-3">
-                Job Description
-              </label>
-              <textarea
-                value={jobDescription}
-                onChange={(e) => { setJobDescription(e.target.value); if (e.target.value) setJdFieldError(''); }}
-                placeholder="Paste the full job description here..."
-                className={`w-full h-64 px-4 py-3 border ${jdFieldError ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'} rounded-lg focus:ring-2 focus:border-transparent resize-none`}
-              />
-              {/* Removed characters count and Ready label */}
-              {jdFieldError ? (
-                <p className="text-sm text-red-600 mt-2">This field is required</p>
-              ) : null}
-            </div>
-
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-              <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-blue-800">
-                Paste the FULL job description for best results. Include requirements, responsibilities, and qualifications.
-              </p>
-            </div>
-          </div>
-
-          <button
-            onClick={analyzeResume}
-            type="button"
-            disabled={loading} // enabled on load; only disabled while loading
-            className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-          >
-            <Sparkles className="w-5 h-5" />
-            Analyze Resume
-          </button>
+            </button>
+          </form>
         </div>
       </div>
     );
   }
 
+  // ANALYZING VIEW
   if (currentView === 'analyzing') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-12 px-4">
-        <div className="max-w-2xl mx-auto text-center space-y-6 py-12">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full">
-            <RefreshCw className="w-10 h-10 text-blue-600 animate-spin" />
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900">
-            {optimizedResume.text ? 'Generating optimized resume...' : 'Analyzing your resume...'}
-          </h2>
-          <div className="space-y-3 text-left max-w-md mx-auto">
-            <div className="flex items-center gap-3 text-gray-600">
-              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              <span>Processing with GPT-4o...</span>
-            </div>
-          </div>
-          <p className="text-sm text-gray-500">This usually takes 15-30 seconds</p>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center px-4">
+        <div className="text-center">
+          <RefreshCw className="w-16 h-16 text-blue-600 animate-spin mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Analyzing your resume...</h2>
+          <p className="text-gray-600">This may take a few moments</p>
         </div>
       </div>
     );
   }
 
+  // RESULTS VIEW
   if (currentView === 'results' && analysis) {
-    const stats = recalculateKeywords();
-    const totalKeywords = stats?.total || 
-      ((analysis.keyword_coverage.matched_keywords?.length || 0) + 
-       (analysis.keyword_coverage.missing_keywords?.length || 0));
-    const matchedCount = stats?.matched?.length || analysis.keyword_coverage.matched_keywords?.length || 0;
-    const missingKeywords = analysis.keyword_coverage.missing_keywords || [];
-    const currentKeyword = currentGapIndex < missingKeywords.length ? missingKeywords[currentGapIndex] : null;
+    const strength = getMatchStrength(analysis.overall_score);
+    const missingKeywords = analysis.keyword_coverage?.missing_keywords || [];
+    const matchedKeywords = analysis.keyword_coverage?.matched_keywords || [];
+    const totalKeywords = missingKeywords.length + matchedKeywords.length;
+    const matchedCount = matchedKeywords.length + appliedKeywords.length;
+    const currentKeyword = missingKeywords[currentGapIndex];
     const keywordText = currentKeyword ? (typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword) : '';
     const allDone = currentGapIndex >= missingKeywords.length;
-
-    // Build highlight keywords = matched + added (same behavior as before)
-    const highlightKeywordsList = [
-      ...(analysis.keyword_coverage.matched_keywords || []).map(kw => typeof kw === 'string' ? kw : kw.keyword),
-      ...addedKeywords
-    ];
+    const confidenceInfo = currentKeyword ? getConfidenceLevel(currentKeyword) : null;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-8 px-4">
         <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left Panel - Editable Resume (CodeMirror, no overlay) */}
-            <div className="space-y-4">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Your Resume (Editable)</h3>
-
-                <ResumeEditor
-                  value={editableResume}
-                  onChange={setEditableResume}
-                  keywords={highlightKeywordsList}
-                  className="border border-gray-300 rounded-lg"
-                />
-
-                <div className="mt-4 flex gap-3">
-                  <button
-                    onClick={copyToClipboard}
-                    type="button"
-                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Download className="w-5 h-5" />
-                    Copy Resume
-                  </button>
-                  <button
-                    onClick={resetApp}
-                    type="button"
-                    className="flex-1 bg-white border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-gray-400 transition-colors"
-                  >
-                    Go Back
-                  </button>
-                </div>
+          {/* Header with score */}
+          <div className="mb-6 flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-gray-900">Resume Optimization</h1>
+            <div className="text-right">
+              <div className="text-sm text-gray-600 mb-1">Match score:</div>
+              <div className="text-3xl font-bold text-blue-600">{Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}%</div>
+              <div className="w-64 bg-gray-200 rounded-full h-2.5 mt-2">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                  style={{ width: `${(matchedCount / Math.max(totalKeywords, 1)) * 100}%` }}
+                ></div>
               </div>
             </div>
+          </div>
 
-            {/* Right Panel - Match Score and Suggestions */}
-            <div className="space-y-4">
-              {/* Match Score Card */}
+          {/* Main grid */}
+          <div className="grid grid-cols-2 gap-6">
+            {/* Left panel - Resume Editor */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Your Resume</h2>
+              <ResumeEditor
+                value={editableResume}
+                onChange={setEditableResume}
+                appliedKeywords={appliedKeywords}
+                currentHighlight={currentHighlight}
+              />
+            </div>
+
+            {/* Right panel - Suggestions */}
+            <div className="space-y-6">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Match Score</h3>
-                
-                <div className="flex items-baseline gap-2 mb-2">
-                  <span className="text-5xl font-bold text-blue-600">
-                    {Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}%
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
-                  <div 
-                    className="bg-blue-600 h-3 rounded-full transition-all duration-500"
-                    style={{ width: `${Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}%` }}
-                  />
-                </div>
-                <p className="text-sm text-gray-600">
-                  <strong>{matchedCount}</strong> of <strong>{totalKeywords}</strong> keywords matched
-                </p>
-
-                {/* Suggestions Summary */}
-                {!allDone && missingKeywords.length > 0 && (
-                  <div className="mt-6 pt-6 border-t border-gray-200">
-                    <p className="text-base text-gray-900 font-semibold">
+                {!allDone && (
+                  <div className="mb-6">
+                    <p className="text-gray-700">
                       I have <span className="text-blue-600">{missingKeywords.length}</span> {missingKeywords.length === 1 ? 'suggestion' : 'suggestions'} for you
                     </p>
                     <p className="text-sm text-gray-600 mt-1">
@@ -695,22 +577,13 @@ Include your name, contact info, work experience, education, and skills."
                       <h4 className="text-sm font-semibold text-gray-500">
                         Suggestion {currentGapIndex + 1} of {missingKeywords.length}
                       </h4>
-                      <span className={`text-xs font-semibold px-2 py-1 rounded ${
-                        currentKeyword.risk === 'low' ? 'bg-green-100 text-green-800' :
-                        currentKeyword.risk === 'high' ? 'bg-red-100 text-red-800' :
-                        'bg-amber-100 text-amber-800'
-                      }`}>
-                        {currentKeyword.risk === 'low' ? '🟢 LOW RISK' :
-                         currentKeyword.risk === 'high' ? '🔴 HIGH RISK' :
-                         '🟡 MEDIUM RISK'}
-                      </span>
+                      {confidenceInfo && (
+                        <span className={`text-xs font-semibold px-2 py-1 rounded ${confidenceInfo.color}`}>
+                          {confidenceInfo.icon} {confidenceInfo.label.toUpperCase()}
+                        </span>
+                      )}
                     </div>
                     <h3 className="text-2xl font-bold text-gray-900 mb-2">Add: "{keywordText}"</h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                      {currentKeyword.risk === 'low' && 'Safe to add if you have this skill or experience'}
-                      {currentKeyword.risk === 'medium' && 'Add if you can discuss this in interviews'}
-                      {currentKeyword.risk === 'high' && '⚠️ Only add if this was your actual role/title'}
-                    </p>
                   </div>
 
                   {/* Editable suggestion text */}
@@ -739,6 +612,44 @@ Include your name, contact info, work experience, education, and skills."
                         <p className="text-xs text-blue-700 mb-2">Line {suggestedLocation.lineIndex + 1}:</p>
                         <p className="text-sm text-gray-800 italic">"{suggestedLocation.text.trim()}"</p>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Why was it suggested */}
+                  {currentKeyword.reasoning && (
+                    <div className="mb-4">
+                      <button
+                        type="button"
+                        onClick={() => toggleGapExpanded(currentGapIndex)}
+                        className="flex items-center gap-2 text-sm font-semibold text-blue-600 hover:text-blue-700"
+                      >
+                        Why was it suggested? {expandedGaps[currentGapIndex] ? '▲' : '▼'}
+                      </button>
+                      {expandedGaps[currentGapIndex] && (
+                        <div className="mt-3 space-y-2">
+                          {currentKeyword.reasoning.map((reason, idx) => (
+                            <p key={idx} className="text-sm text-gray-700">• {reason}</p>
+                          ))}
+                          {currentKeyword.jd_quote && (
+                            <div className="mt-3 pt-3 border-t border-gray-200">
+                              <p className="text-xs font-semibold text-gray-600 mb-1">📋 From Job Description:</p>
+                              <p className="text-sm text-gray-700 italic">"{currentKeyword.jd_quote}"</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {confidenceInfo && (
+                    <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-700">
+                        <span className="font-semibold">{confidenceInfo.label}:</span> {
+                          confidenceInfo.level === 'high' ? 'Explicit match with proof in your resume' :
+                          confidenceInfo.level === 'medium' ? 'Strong connection, same concept with different wording' :
+                          'Related but inferred from context'
+                        }
+                      </p>
                     </div>
                   )}
 
@@ -771,93 +682,26 @@ Include your name, contact info, work experience, education, and skills."
                     Your resume now has <strong>{matchedCount}</strong> out of <strong>{totalKeywords}</strong> keywords
                     ({Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}% match)
                   </p>
+                  <button
+                    onClick={() => {
+                      const blob = new Blob([editableResume], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'optimized-resume.txt';
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="mt-6 bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-blue-700 transition-colors inline-flex items-center gap-2"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Resume
+                  </button>
                 </div>
               ) : null}
             </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentView === 'comparison' && optimizedResume.text) {
-    const strength = getMatchStrength(analysis.overall_score);
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-12 px-4">
-        <div className="max-w-6xl mx-auto space-y-6">
-          <div className="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-xl p-8 text-center">
-            <h2 className="text-3xl font-bold text-gray-900">Optimization Complete! 🎉</h2>
-            <div className="text-4xl font-bold text-green-600">
-              Score: {analysis.overall_score}/100
-            </div>
-            <div className="text-lg text-gray-700">
-              Match Strength: <span className={`${strength.color} font-semibold`}>{strength.label}</span>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Original</h3>
-              <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-wrap max-h-96 overflow-y-auto">
-                {resume.text}
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Optimized</h3>
-              <div className="bg-green-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-wrap max-h-96 overflow-y-auto">
-                {optimizedResume.text}
-              </div>
-            </div>
-          </div>
-
-          {optimizedResume.changes && optimizedResume.changes.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h3 className="font-bold text-gray-900 mb-4">Changes Made ({optimizedResume.changes.length} total):</h3>
-              <div className="space-y-4">
-                {optimizedResume.changes.map((change, i) => (
-                  <div key={i} className="border-l-4 border-blue-500 pl-4 py-2">
-                    <div className="text-sm font-semibold text-gray-900 mb-1">
-                      {i + 1}. {change.location || 'Updated section'}
-                    </div>
-                    {change.before && (
-                      <div className="text-sm text-gray-600 mb-1">
-                        <span className="font-medium">Original:</span> "{change.before}"
-                      </div>
-                    )}
-                    {change.after && (
-                      <div className="text-sm text-gray-600 mb-1">
-                        <span className="font-medium">Updated:</span> "{change.after}"
-                      </div>
-                    )}
-                    {change.keyword && (
-                      <div className="text-xs text-green-700">
-                        Added: "{change.keyword}"
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-4">
-            <button
-              onClick={downloadResume}
-              type="button"
-              className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
-            >
-              <Download className="w-5 h-5" />
-              Download Optimized Resume
-            </button>
-            <button
-              onClick={resetApp}
-              type="button"
-              className="flex-1 bg-white border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-gray-400 transition-colors"
-            >
-              Try Another Job
-            </button>
           </div>
         </div>
       </div>

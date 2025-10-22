@@ -2,58 +2,80 @@
 import { StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView } from "@codemirror/view";
 
-/** Effect to push new keywords into the decoration field */
+/** Effect to push new highlights into the decoration field */
 export const setHighlights = StateEffect.define();
 
-/** Tailwind green bg for matches (works because Tailwind classes are global) */
-const decoMark = Decoration.mark({ class: "bg-green-200" });
+/** Green background for applied keywords */
+const greenMark = Decoration.mark({ class: "bg-green-200" });
 
-/** Build a DecorationSet for all keyword matches in the document */
-const buildDecorations = (doc, keywords) => {
-  if (!keywords || !keywords.length) return Decoration.none;
+/** Yellow background for current suggestion */
+const yellowMark = Decoration.mark({ class: "bg-yellow-200" });
 
-  const escaped = keywords
-    .filter(Boolean)
-    .map((k) =>
-      (typeof k === "string" ? k : k.keyword || "")
-        .trim()
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    )
-    .filter(Boolean);
-
-  if (!escaped.length) return Decoration.none;
-
-  // Word-boundary match, case-insensitive
-  const rx = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
-  const text = doc.toString();
+/** Build a DecorationSet for all highlights in the document */
+const buildDecorations = (doc, appliedKeywords, currentHighlight) => {
   const ranges = [];
-  let m;
-  while ((m = rx.exec(text))) {
-    ranges.push(decoMark.range(m.index, m.index + m[0].length));
+  const text = doc.toString();
+  const lines = text.split('\n');
+
+  // 1. Add green highlights for all applied keywords
+  if (appliedKeywords && appliedKeywords.length > 0) {
+    appliedKeywords.forEach(applied => {
+      const searchText = applied.text || applied.keyword;
+      if (!searchText) return;
+
+      // Escape special regex characters
+      const escaped = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'gi');
+      
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        ranges.push(greenMark.range(match.index, match.index + match[0].length));
+      }
+    });
   }
-  return ranges.length ? Decoration.set(ranges) : Decoration.none;
+
+  // 2. Add yellow highlight for current suggestion line
+  if (currentHighlight && currentHighlight.lineIndex >= 0) {
+    let charCount = 0;
+    for (let i = 0; i < currentHighlight.lineIndex && i < lines.length; i++) {
+      charCount += lines[i].length + 1; // +1 for newline
+    }
+    
+    if (currentHighlight.lineIndex < lines.length) {
+      const lineLength = lines[currentHighlight.lineIndex].length;
+      if (lineLength > 0) {
+        ranges.push(yellowMark.range(charCount, charCount + lineLength));
+      }
+    }
+  }
+
+  return ranges.length > 0 ? Decoration.set(ranges) : Decoration.none;
 };
 
 /** StateField that holds and updates the highlight decorations */
-export const highlightField = (initialKeywords = []) =>
+export const highlightField = (initialAppliedKeywords = [], initialCurrentHighlight = null) =>
   StateField.define({
     create(state) {
-      return buildDecorations(state.doc, initialKeywords);
+      return buildDecorations(state.doc, initialAppliedKeywords, initialCurrentHighlight);
     },
     update(deco, tr) {
       // Map existing decorations through document changes
       deco = deco.map(tr.changes);
 
-      // If keywords are updated externally, rebuild
+      // If highlights are updated externally, rebuild
       for (const e of tr.effects) {
         if (e.is(setHighlights)) {
-          return buildDecorations(tr.state.doc, e.value || []);
+          return buildDecorations(
+            tr.state.doc, 
+            e.value?.appliedKeywords || [], 
+            e.value?.currentHighlight || null
+          );
         }
       }
 
-      // If document changed (user typed), recompute using current initialKeywords
+      // If document changed (user typed), recompute using current values
       if (tr.docChanged) {
-        return buildDecorations(tr.state.doc, initialKeywords);
+        return buildDecorations(tr.state.doc, initialAppliedKeywords, initialCurrentHighlight);
       }
 
       return deco;
