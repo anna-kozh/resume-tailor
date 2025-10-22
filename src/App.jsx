@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Sparkles, Download, ChevronDown, ChevronUp, AlertCircle, CheckCircle, Info, RefreshCw } from 'lucide-react';
+import { Upload, Sparkles, Download, AlertCircle, CheckCircle, Info, RefreshCw } from 'lucide-react';
 
 const App = () => {
   const [currentView, setCurrentView] = useState('input');
@@ -21,7 +21,7 @@ const App = () => {
   const [generatingSuggestion, setGeneratingSuggestion] = useState(false);
   const [suggestedLocation, setSuggestedLocation] = useState(null); // { lineStart, lineEnd, text }
 
-  // NEW: field-level errors
+  // Field-level errors for red borders + messages
   const [resumeFieldError, setResumeFieldError] = useState('');
   const [jdFieldError, setJdFieldError] = useState('');
 
@@ -108,7 +108,7 @@ const App = () => {
   const analyzeResume = async (e) => {
     if (e) e.preventDefault();
 
-    // NEW: required checks per field
+    // Required checks per field
     let hasError = false;
     if (!resume.text) {
       setResumeFieldError('This field is required');
@@ -124,7 +124,7 @@ const App = () => {
     }
     if (hasError) return;
 
-    // Keep existing min-length rule as-is (not part of the requested change)
+    // Keep existing min-length rule as-is (unchanged by your request)
     if (!resume.text || jobDescription.length < 200) {
       setError('Please upload a resume and paste a job description (minimum 200 characters)');
       return;
@@ -248,7 +248,7 @@ const App = () => {
     setCurrentGapIndex(0);
     setAddedKeywords([]);
     setSuggestedSentence('');
-    // NEW: clear field errors
+    // clear field errors
     setResumeFieldError('');
     setJdFieldError('');
   };
@@ -481,18 +481,9 @@ const App = () => {
                     placeholder="Paste your resume text here...
 
 Include your name, contact info, work experience, education, and skills."
-                    className="w-full h-96 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
+                    className={`w-full h-96 px-4 py-3 border ${resumeFieldError ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'} rounded-lg focus:ring-2 focus:border-transparent resize-none font-mono text-sm`}
                   />
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-gray-500">{resumeInput.length} characters</span>
-                    {resumeInput.length >= 100 && (
-                      <span className="text-green-600 flex items-center gap-1">
-                        <CheckCircle className="w-4 h-4" />
-                        Ready
-                      </span>
-                    )}
-                  </div>
-                  {/* NEW: resume required error (paste) */}
+                  {/* Removed characters count and Ready label */}
                   {resumeFieldError ? (
                     <p className="text-sm text-red-600 mt-2">This field is required</p>
                   ) : null}
@@ -501,7 +492,7 @@ Include your name, contact info, work experience, education, and skills."
 
               {inputMethod === 'upload' && (
                 <div>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
+                  <div className={`border-2 border-dashed ${resumeFieldError ? 'border-red-500' : 'border-gray-300'} rounded-lg p-8 text-center hover:border-blue-400 transition-colors`}>
                     <input
                       type="file"
                       onChange={handleFileUpload}
@@ -525,7 +516,6 @@ Include your name, contact info, work experience, education, and skills."
                       <span>Uploaded: {resume.filename}</span>
                     </div>
                   )}
-                  {/* NEW: resume required error (upload) */}
                   {resumeFieldError ? (
                     <p className="text-sm text-red-600 mt-2">This field is required</p>
                   ) : null}
@@ -550,18 +540,9 @@ Include your name, contact info, work experience, education, and skills."
                 value={jobDescription}
                 onChange={(e) => { setJobDescription(e.target.value); if (e.target.value) setJdFieldError(''); }}
                 placeholder="Paste the full job description here..."
-                className="w-full h-64 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                className={`w-full h-64 px-4 py-3 border ${jdFieldError ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'} rounded-lg focus:ring-2 focus:border-transparent resize-none`}
               />
-              <div className="mt-2 flex items-center justify-between text-sm">
-                <span className="text-gray-500">{jobDescription.length} characters (minimum 200)</span>
-                {jobDescription.length >= 200 && (
-                  <span className="text-green-600 flex items-center gap-1">
-                    <CheckCircle className="w-4 h-4" />
-                    Ready
-                  </span>
-                )}
-              </div>
-              {/* NEW: JD required error */}
+              {/* Removed characters count and Ready label */}
               {jdFieldError ? (
                 <p className="text-sm text-red-600 mt-2">This field is required</p>
               ) : null}
@@ -833,11 +814,11 @@ Include your name, contact info, work experience, education, and skills."
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-12 px-4">
         <div className="max-w-6xl mx-auto space-y-6">
           <div className="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-xl p-8 text-center">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">Optimization Complete! 🎉</h2>
-            <div className="text-4xl font-bold text-green-600 mb-2">
+            <h2 className="text-3xl font-bold text-gray-900">Optimization Complete! 🎉</h2>
+            <div className="text-4xl font-bold text-green-600">
               Score: {analysis.overall_score}/100
             </div>
-            <div className="text-lg text-gray-700 mb-6">
+            <div className="text-lg text-gray-700">
               Match Strength: <span className={`${strength.color} font-semibold`}>{strength.label}</span>
             </div>
           </div>
