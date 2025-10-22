@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Sparkles, Download, AlertCircle, CheckCircle, Info, RefreshCw } from 'lucide-react';
-import ResumeEditor from './components/ResumeEditor.jsx';
+import { Upload, Sparkles, Download, ChevronDown, ChevronUp, AlertCircle, CheckCircle, Info, RefreshCw } from 'lucide-react';
 
 const App = () => {
   const [currentView, setCurrentView] = useState('input');
@@ -22,7 +21,7 @@ const App = () => {
   const [generatingSuggestion, setGeneratingSuggestion] = useState(false);
   const [suggestedLocation, setSuggestedLocation] = useState(null); // { lineStart, lineEnd, text }
 
-  // Field-level errors for red borders + messages
+  // NEW: field-level errors
   const [resumeFieldError, setResumeFieldError] = useState('');
   const [jdFieldError, setJdFieldError] = useState('');
 
@@ -109,7 +108,7 @@ const App = () => {
   const analyzeResume = async (e) => {
     if (e) e.preventDefault();
 
-    // Required checks per field
+    // NEW: required checks per field
     let hasError = false;
     if (!resume.text) {
       setResumeFieldError('This field is required');
@@ -125,7 +124,7 @@ const App = () => {
     }
     if (hasError) return;
 
-    // Keep existing min-length rule as-is (unchanged by your request)
+    // Keep existing min-length rule as-is (not part of the requested change)
     if (!resume.text || jobDescription.length < 200) {
       setError('Please upload a resume and paste a job description (minimum 200 characters)');
       return;
@@ -136,15 +135,13 @@ const App = () => {
     setLoading(true);
 
     try {
-      const response = await fetch('/.netlify/functions/ats-audit', {
+      const response = await fetch('/.netlify/functions/scorer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-  resume: resume.text,
-  job_description: jobDescription,
-  user_locale: 'en-AU',
-  max_suggestions: 20
-})
+          resume: resume.text,
+          jobDescription: jobDescription
+        })
       });
 
       if (!response.ok) {
@@ -251,7 +248,7 @@ const App = () => {
     setCurrentGapIndex(0);
     setAddedKeywords([]);
     setSuggestedSentence('');
-    // clear field errors
+    // NEW: clear field errors
     setResumeFieldError('');
     setJdFieldError('');
   };
@@ -373,6 +370,15 @@ const App = () => {
     }
   };
 
+  const handleResumeEdit = (e) => {
+    setEditableResume(e.target.value);
+  };
+
+  const handleContentEditableChange = (e) => {
+    const text = e.target.innerText;
+    setEditableResume(text);
+  };
+
   const recalculateKeywords = () => {
     if (!analysis || !editableResume) return;
     
@@ -396,6 +402,24 @@ const App = () => {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(editableResume);
     alert('Resume copied to clipboard!');
+  };
+
+  const highlightKeywords = (text) => {
+    if (!analysis) return text;
+    
+    let highlighted = text;
+    const allMatchedKeywords = [
+      ...(analysis.keyword_coverage.matched_keywords || []),
+      ...addedKeywords
+    ];
+    
+    allMatchedKeywords.forEach(kw => {
+      const keyword = typeof kw === 'string' ? kw : kw.keyword;
+      const regex = new RegExp(`(${keyword})`, 'gi');
+      highlighted = highlighted.replace(regex, '<mark class="bg-green-200">$1</mark>');
+    });
+    
+    return highlighted;
   };
 
   if (currentView === 'input') {
@@ -457,9 +481,18 @@ const App = () => {
                     placeholder="Paste your resume text here...
 
 Include your name, contact info, work experience, education, and skills."
-                    className={`w-full h-96 px-4 py-3 border ${resumeFieldError ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'} rounded-lg focus:ring-2 focus:border-transparent resize-none font-mono text-sm`}
+                    className="w-full h-96 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
                   />
-                  {/* Removed characters count and Ready label */}
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className="text-gray-500">{resumeInput.length} characters</span>
+                    {resumeInput.length >= 100 && (
+                      <span className="text-green-600 flex items-center gap-1">
+                        <CheckCircle className="w-4 h-4" />
+                        Ready
+                      </span>
+                    )}
+                  </div>
+                  {/* NEW: resume required error (paste) */}
                   {resumeFieldError ? (
                     <p className="text-sm text-red-600 mt-2">This field is required</p>
                   ) : null}
@@ -468,7 +501,7 @@ Include your name, contact info, work experience, education, and skills."
 
               {inputMethod === 'upload' && (
                 <div>
-                  <div className={`border-2 border-dashed ${resumeFieldError ? 'border-red-500' : 'border-gray-300'} rounded-lg p-8 text-center hover:border-blue-400 transition-colors`}>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
                     <input
                       type="file"
                       onChange={handleFileUpload}
@@ -492,6 +525,7 @@ Include your name, contact info, work experience, education, and skills."
                       <span>Uploaded: {resume.filename}</span>
                     </div>
                   )}
+                  {/* NEW: resume required error (upload) */}
                   {resumeFieldError ? (
                     <p className="text-sm text-red-600 mt-2">This field is required</p>
                   ) : null}
@@ -516,9 +550,18 @@ Include your name, contact info, work experience, education, and skills."
                 value={jobDescription}
                 onChange={(e) => { setJobDescription(e.target.value); if (e.target.value) setJdFieldError(''); }}
                 placeholder="Paste the full job description here..."
-                className={`w-full h-64 px-4 py-3 border ${jdFieldError ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'} rounded-lg focus:ring-2 focus:border-transparent resize-none`}
+                className="w-full h-64 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
-              {/* Removed characters count and Ready label */}
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-gray-500">{jobDescription.length} characters (minimum 200)</span>
+                {jobDescription.length >= 200 && (
+                  <span className="text-green-600 flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4" />
+                    Ready
+                  </span>
+                )}
+              </div>
+              {/* NEW: JD required error */}
               {jdFieldError ? (
                 <p className="text-sm text-red-600 mt-2">This field is required</p>
               ) : null}
@@ -579,28 +622,41 @@ Include your name, contact info, work experience, education, and skills."
     const keywordText = currentKeyword ? (typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword) : '';
     const allDone = currentGapIndex >= missingKeywords.length;
 
-    // Build highlight keywords = matched + added (same behavior as before)
-    const highlightKeywordsList = [
-      ...(analysis.keyword_coverage.matched_keywords || []).map(kw => typeof kw === 'string' ? kw : kw.keyword),
-      ...addedKeywords
-    ];
-
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-8 px-4">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left Panel - Editable Resume (CodeMirror, no overlay) */}
+            {/* Left Panel - Editable Resume */}
             <div className="space-y-4">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-bold text-gray-900 mb-4">Your Resume (Editable)</h3>
-
-                <ResumeEditor
-                  value={editableResume}
-                  onChange={setEditableResume}
-                  keywords={highlightKeywordsList}
-                  className="border border-gray-300 rounded-lg"
-                />
-
+                
+                {/* Highlighted view overlay */}
+                <div className="relative">
+                  <div 
+                    className="absolute inset-0 w-full h-[600px] px-4 py-3 rounded-lg pointer-events-none overflow-auto whitespace-pre-wrap font-mono text-sm"
+                    style={{ 
+                      color: 'transparent',
+                      background: 'transparent',
+                      zIndex: 1
+                    }}
+                    dangerouslySetInnerHTML={{ 
+                      __html: highlightKeywords(editableResume).replace(/\n/g, '<br/>') 
+                    }}
+                  />
+                  <textarea
+                    value={editableResume}
+                    onChange={handleResumeEdit}
+                    onBlur={recalculateKeywords}
+                    className="relative w-full h-[600px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
+                    style={{
+                      background: 'transparent',
+                      zIndex: 2
+                    }}
+                    placeholder="Your resume text..."
+                  />
+                </div>
+                
                 <div className="mt-4 flex gap-3">
                   <button
                     onClick={copyToClipboard}
@@ -777,11 +833,11 @@ Include your name, contact info, work experience, education, and skills."
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-12 px-4">
         <div className="max-w-6xl mx-auto space-y-6">
           <div className="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-xl p-8 text-center">
-            <h2 className="text-3xl font-bold text-gray-900">Optimization Complete! 🎉</h2>
-            <div className="text-4xl font-bold text-green-600">
+            <h2 className="text-3xl font-bold text-gray-900 mb-4">Optimization Complete! 🎉</h2>
+            <div className="text-4xl font-bold text-green-600 mb-2">
               Score: {analysis.overall_score}/100
             </div>
-            <div className="text-lg text-gray-700">
+            <div className="text-lg text-gray-700 mb-6">
               Match Strength: <span className={`${strength.color} font-semibold`}>{strength.label}</span>
             </div>
           </div>
