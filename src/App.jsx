@@ -5,6 +5,7 @@ const App = () => {
   const [currentView, setCurrentView] = useState('input');
   const [resume, setResume] = useState({ text: '', filename: '' });
   const [resumeInput, setResumeInput] = useState('');
+  const [editableResume, setEditableResume] = useState(''); // For left panel editing
   const [inputMethod, setInputMethod] = useState('paste');
   const [jobDescription, setJobDescription] = useState('');
   const [analysis, setAnalysis] = useState(null);
@@ -14,6 +15,10 @@ const App = () => {
   const [expandedGaps, setExpandedGaps] = useState({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [currentGapIndex, setCurrentGapIndex] = useState(0);
+  const [suggestedSentence, setSuggestedSentence] = useState('');
+  const [addedKeywords, setAddedKeywords] = useState([]);
+  const [generatingSuggestion, setGeneratingSuggestion] = useState(false);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
@@ -121,7 +126,15 @@ const App = () => {
 
       const data = await response.json();
       setAnalysis(data);
+      setEditableResume(resume.text); // Initialize editable resume
+      setCurrentGapIndex(0);
+      setAddedKeywords([]);
       setCurrentView('results');
+      
+      // Generate first suggestion if there are missing keywords
+      if (data.keyword_coverage?.missing_keywords?.length > 0) {
+        generateSuggestionForKeyword(data.keyword_coverage.missing_keywords[0], resume.text);
+      }
     } catch (err) {
       console.error('Analysis error:', err);
       setError('Analysis failed. Please try again. Error: ' + err.message);
@@ -200,16 +213,133 @@ const App = () => {
     if (e) e.preventDefault();
     
     setCurrentView('input');
-    setResume({ text: '', filename: '' });
-    setResumeInput('');
-    setJobDescription('');
+    // Keep resume and JD pre-filled
     setAnalysis(null);
     setOptimizedResume({ text: '', changes: [] });
     setSelectedGaps([]);
     setShowAllGaps(false);
     setExpandedGaps({});
     setError('');
-    setInputMethod('paste');
+    setCurrentGapIndex(0);
+    setAddedKeywords([]);
+    setSuggestedSentence('');
+  };
+
+  const generateSuggestionForKeyword = async (keyword, currentResume) => {
+    setGeneratingSuggestion(true);
+    setSuggestedSentence('');
+    
+    try {
+      const keywordText = typeof keyword === 'string' ? keyword : keyword.keyword;
+      
+      // Simple prompt to generate a single sentence
+      const prompt = `Add the keyword "${keywordText}" to this resume naturally. 
+
+Resume excerpt (last 500 chars):
+${currentResume.slice(-500)}
+
+Generate ONE concise sentence that incorporates "${keywordText}" naturally. The sentence should fit in an Experience section bullet point. Return only the sentence, nothing else.`;
+
+      const response = await fetch('/.netlify/functions/writer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resume: currentResume,
+          jobDescription: jobDescription,
+          analysis: analysis,
+          selectedGaps: [keywordText],
+          generateSuggestion: true,
+          prompt: prompt
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSuggestedSentence(data.suggestion || `• Experienced with ${keywordText} to enhance project outcomes`);
+      } else {
+        setSuggestedSentence(`• Experienced with ${keywordText} to enhance project outcomes`);
+      }
+    } catch (error) {
+      console.error('Error generating suggestion:', error);
+      const keywordText = typeof keyword === 'string' ? keyword : keyword.keyword;
+      setSuggestedSentence(`• Experienced with ${keywordText} to enhance project outcomes`);
+    } finally {
+      setGeneratingSuggestion(false);
+    }
+  };
+
+  const handleAddKeyword = () => {
+    if (!suggestedSentence.trim()) return;
+    
+    const newResume = editableResume + '\n' + suggestedSentence;
+    setEditableResume(newResume);
+    
+    const currentKeyword = analysis.keyword_coverage.missing_keywords[currentGapIndex];
+    const keywordText = typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword;
+    setAddedKeywords([...addedKeywords, keywordText]);
+    
+    handleSkipKeyword();
+  };
+
+  const handleSkipKeyword = () => {
+    const nextIndex = currentGapIndex + 1;
+    
+    if (nextIndex < analysis.keyword_coverage.missing_keywords.length) {
+      setCurrentGapIndex(nextIndex);
+      generateSuggestionForKeyword(
+        analysis.keyword_coverage.missing_keywords[nextIndex],
+        editableResume
+      );
+    } else {
+      setCurrentGapIndex(nextIndex); // Show completion state
+    }
+  };
+
+  const handleResumeEdit = (e) => {
+    setEditableResume(e.target.value);
+  };
+
+  const recalculateKeywords = () => {
+    if (!analysis || !editableResume) return;
+    
+    const matched = analysis.keyword_coverage.matched_keywords.filter(kw => {
+      const keyword = typeof kw === 'string' ? kw : kw.keyword;
+      return editableResume.toLowerCase().includes(keyword.toLowerCase());
+    });
+    
+    const nowMatched = analysis.keyword_coverage.missing_keywords.filter(kw => {
+      const keyword = typeof kw === 'string' ? kw : kw.keyword;
+      return editableResume.toLowerCase().includes(keyword.toLowerCase());
+    });
+    
+    return {
+      matched: [...matched, ...nowMatched],
+      total: analysis.keyword_coverage.matched_keywords.length + 
+             analysis.keyword_coverage.missing_keywords.length
+    };
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(editableResume);
+    alert('Resume copied to clipboard!');
+  };
+
+  const highlightKeywords = (text) => {
+    if (!analysis) return text;
+    
+    let highlighted = text;
+    const allMatchedKeywords = [
+      ...(analysis.keyword_coverage.matched_keywords || []),
+      ...addedKeywords
+    ];
+    
+    allMatchedKeywords.forEach(kw => {
+      const keyword = typeof kw === 'string' ? kw : kw.keyword;
+      const regex = new RegExp(`(${keyword})`, 'gi');
+      highlighted = highlighted.replace(regex, '<mark class="bg-green-200">$1</mark>');
+    });
+    
+    return highlighted;
   };
 
   if (currentView === 'input') {
@@ -390,203 +520,184 @@ Include your name, contact info, work experience, education, and skills."
   }
 
   if (currentView === 'results' && analysis) {
-    const strength = getMatchStrength(analysis.overall_score);
+    const stats = recalculateKeywords();
+    const totalKeywords = stats?.total || 
+      ((analysis.keyword_coverage.matched_keywords?.length || 0) + 
+       (analysis.keyword_coverage.missing_keywords?.length || 0));
+    const matchedCount = stats?.matched?.length || analysis.keyword_coverage.matched_keywords?.length || 0;
+    const missingKeywords = analysis.keyword_coverage.missing_keywords || [];
+    const currentKeyword = currentGapIndex < missingKeywords.length ? missingKeywords[currentGapIndex] : null;
+    const keywordText = currentKeyword ? (typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword) : '';
+    const allDone = currentGapIndex >= missingKeywords.length;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-12 px-4">
-        <div className="max-w-4xl mx-auto space-y-6">
-          <div className={`${strength.bg} border-2 border-current ${strength.color} rounded-xl p-8`}>
-            <div className="text-center space-y-4">
-              <h2 className="text-3xl font-bold">{strength.label}</h2>
-              <p className="text-lg">Your resume {analysis.overall_score >= 71 ? 'strongly' : 'moderately'} aligns with this job description</p>
-              
-              <div className="flex items-center justify-center gap-8 mt-6">
-                <div>
-                  <div className="text-sm font-semibold mb-1">Keyword Coverage</div>
-                  <div className="flex items-center gap-1">
-                    {[0, 1, 2, 3].map((i) => (
-                      <span key={i} className="text-2xl">
-                        {i < Math.floor(analysis.overall_score / 25) ? '⭐' : '☆'}
-                      </span>
-                    ))}
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-8 px-4">
+        <div className="max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Left Panel - Editable Resume */}
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">Your Resume (Editable)</h3>
+                <textarea
+                  value={editableResume}
+                  onChange={handleResumeEdit}
+                  onBlur={recalculateKeywords}
+                  className="w-full h-[600px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
+                  placeholder="Your resume text..."
+                />
+                <div className="mt-4 flex gap-3">
+                  <button
+                    onClick={copyToClipboard}
+                    type="button"
+                    className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Download className="w-5 h-5" />
+                    Copy Resume
+                  </button>
+                  <button
+                    onClick={resetApp}
+                    type="button"
+                    className="flex-1 bg-white border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-gray-400 transition-colors"
+                  >
+                    Go Back
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Panel - Stats and Suggestions */}
+            <div className="space-y-4">
+              {/* Stats Card */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">Match Analysis</h3>
+                
+                <div className="mb-6">
+                  <div className="flex items-baseline gap-2 mb-2">
+                    <span className="text-4xl font-bold text-gray-900">{matchedCount}</span>
+                    <span className="text-xl text-gray-500">/ {totalKeywords} keywords</span>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <p className="text-red-800">{error}</p>
-            </div>
-          )}
-
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="mb-6">
-              <div className="flex items-baseline gap-3 mb-2">
-                <span className="text-sm text-gray-600">Match Score:</span>
-                <span className="text-5xl font-bold text-gray-900">
-                  {analysis.overall_score}
-                  <span className="text-3xl text-gray-400">/100</span>
-                </span>
-              </div>
-              <p className="text-sm text-gray-600 mb-4">
-                Your resume matches {analysis.overall_score}% of the job requirements
-              </p>
-              
-              <div className="bg-gray-100 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">Keywords Found</span>
-                  <span className="text-sm font-bold text-gray-900">
-                    {analysis.keyword_coverage.matched_keywords?.length || 0} / {
-                      (analysis.keyword_coverage.matched_keywords?.length || 0) + 
-                      (analysis.keyword_coverage.missing_keywords?.length || 0)
-                    }
-                  </span>
-                </div>
-                <div className="w-full bg-gray-300 rounded-full h-3">
-                  <div 
-                    className="bg-blue-600 h-3 rounded-full transition-all duration-500" 
-                    style={{ 
-                      width: `${Math.round(
-                        ((analysis.keyword_coverage.matched_keywords?.length || 0) / 
-                        Math.max(
-                          (analysis.keyword_coverage.matched_keywords?.length || 0) + 
-                          (analysis.keyword_coverage.missing_keywords?.length || 0),
-                          1
-                        )) * 100
-                      )}%` 
-                    }} 
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-gray-200 pt-6">
-              {analysis.keyword_coverage.matched_keywords && analysis.keyword_coverage.matched_keywords.length > 0 && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-                  <h3 className="font-semibold text-green-900 mb-2">Excellent coverage of:</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {analysis.keyword_coverage.matched_keywords.map((keyword, i) => (
-                      <span key={i} className="bg-white px-3 py-1 rounded-full text-sm text-green-800 border border-green-200">
-                        ✓ {typeof keyword === 'string' ? keyword : keyword.keyword}
-                      </span>
-                    ))}
+                  <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
+                    <div 
+                      className="bg-blue-600 h-3 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}%` }}
+                    />
                   </div>
-                </div>
-              )}
-
-              {analysis.keyword_coverage.missing_keywords && analysis.keyword_coverage.missing_keywords.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                  <h3 className="font-semibold text-amber-900 mb-2">Key gaps identified:</h3>
-                  <p className="text-sm text-amber-800">
-                    ⚠ {analysis.keyword_coverage.missing_keywords.length} missing keywords
+                  <p className="text-sm text-gray-600">
+                    {Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}% match
                   </p>
                 </div>
-              )}
-            </div>
-          </div>
 
-          {showAllGaps && analysis.keyword_coverage.missing_keywords && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
-              <h3 className="text-xl font-bold text-gray-900">Missing Keywords</h3>
-              
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
-                <p className="font-semibold text-blue-900 mb-2">📊 Risk Levels Explained:</p>
-                <ul className="space-y-1 text-blue-800">
-                  <li>• <strong>🟢 Low Risk:</strong> Common skills/tools - add if you have basic experience</li>
-                  <li>• <strong>🟡 Medium Risk:</strong> Specific methodologies - be ready to discuss in detail</li>
-                  <li>• <strong>🔴 High Risk:</strong> Job titles/expertise - only add if this was your actual role</li>
-                </ul>
-              </div>
-              
-              <div className="space-y-3">
-                {analysis.keyword_coverage.missing_keywords.map((gap, i) => {
-                  const gapKeyword = typeof gap === 'string' ? gap : gap.keyword;
-                  const gapRisk = gap.risk || 'medium';
-                  const gapPoints = gap.points || 2;
-                  
-                  const riskStyles = {
-                    low: { 
-                      bg: 'bg-green-50', 
-                      border: 'border-green-200', 
-                      text: 'text-green-800',
-                      icon: '🟢',
-                      label: 'LOW RISK'
-                    },
-                    medium: { 
-                      bg: 'bg-amber-50', 
-                      border: 'border-amber-200', 
-                      text: 'text-amber-800',
-                      icon: '🟡',
-                      label: 'MEDIUM RISK'
-                    },
-                    high: { 
-                      bg: 'bg-red-50', 
-                      border: 'border-red-200', 
-                      text: 'text-red-800',
-                      icon: '🔴',
-                      label: 'HIGH RISK'
-                    }
-                  };
-                  
-                  const style = riskStyles[gapRisk] || riskStyles.medium;
-
-                  return (
-                    <div key={i} className={`border ${style.border} ${style.bg} rounded-lg p-4`}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <input
-                          type="checkbox"
-                          id={`gap-${i}`}
-                          checked={selectedGaps.includes(gapKeyword)}
-                          onChange={() => {
-                            setSelectedGaps(prev =>
-                              prev.includes(gapKeyword)
-                                ? prev.filter(k => k !== gapKeyword)
-                                : [...prev, gapKeyword]
-                            );
-                          }}
-                          className="w-4 h-4"
-                        />
-                        <label htmlFor={`gap-${i}`} className="flex-1 font-medium text-gray-900">
-                          "{gapKeyword}"
-                        </label>
-                        <span className={`text-xs font-semibold ${style.text} px-2 py-1 rounded`}>
-                          {style.icon} {style.label}
+                {/* Matched Keywords */}
+                <div className="mb-6">
+                  <h4 className="text-sm font-semibold text-green-900 mb-2 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" />
+                    Keywords Found ({matchedCount})
+                  </h4>
+                  <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                    {analysis.keyword_coverage.matched_keywords?.map((kw, i) => {
+                      const keyword = typeof kw === 'string' ? kw : kw.keyword;
+                      return (
+                        <span key={i} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs border border-green-200">
+                          {keyword}
                         </span>
-                        <span className="text-blue-600 font-semibold">+{gapPoints} pts</span>
-                      </div>
-                      <p className={`text-sm ${style.text} ml-6`}>
-                        {gapRisk === 'low' && 'Safe to add if you have this skill or have used this tool'}
-                        {gapRisk === 'medium' && 'Add if you can discuss this methodology in interviews'}
-                        {gapRisk === 'high' && '⚠️ Only add if this was your actual title/role - high interview scrutiny'}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+                      );
+                    })}
+                    {addedKeywords.map((kw, i) => (
+                      <span key={`added-${i}`} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs border border-green-200">
+                        {kw} ✨
+                      </span>
+                    ))}
+                  </div>
+                </div>
 
-          <div className="flex gap-4">
-            <button
-              onClick={() => setShowAllGaps(!showAllGaps)}
-              type="button"
-              className="flex-1 bg-white border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-gray-400 transition-colors flex items-center justify-center gap-2"
-            >
-              {showAllGaps ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-              {showAllGaps ? 'Hide' : 'Show'} Missing Keywords
-            </button>
-            <button
-              onClick={generateOptimized}
-              type="button"
-              disabled={loading}
-              className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
-            >
-              <Sparkles className="w-5 h-5" />
-              {loading ? 'Generating...' : 'Generate Optimized Resume'}
-            </button>
+                {/* Missing Keywords Count */}
+                {missingKeywords.length > 0 && !allDone && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="text-sm text-amber-900">
+                      <strong>{missingKeywords.length - currentGapIndex}</strong> keywords remaining to review
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Suggestion Card */}
+              {!allDone && currentKeyword ? (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-semibold text-gray-700">
+                        Missing Keyword {currentGapIndex + 1} of {missingKeywords.length}
+                      </h4>
+                      <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                        currentKeyword.risk === 'low' ? 'bg-green-100 text-green-800' :
+                        currentKeyword.risk === 'high' ? 'bg-red-100 text-red-800' :
+                        'bg-amber-100 text-amber-800'
+                      }`}>
+                        {currentKeyword.risk === 'low' ? '🟢 LOW RISK' :
+                         currentKeyword.risk === 'high' ? '🔴 HIGH RISK' :
+                         '🟡 MEDIUM RISK'}
+                      </span>
+                    </div>
+                    <h3 className="text-2xl font-bold text-gray-900 mb-2">"{keywordText}"</h3>
+                    <p className="text-sm text-gray-600">
+                      {currentKeyword.risk === 'low' && 'Safe to add if you have this skill or experience'}
+                      {currentKeyword.risk === 'medium' && 'Add if you can discuss this in interviews'}
+                      {currentKeyword.risk === 'high' && '⚠️ Only add if this was your actual role/title'}
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Suggested Addition (Editable):
+                    </label>
+                    {generatingSuggestion ? (
+                      <div className="flex items-center gap-2 text-gray-500 py-8">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span className="text-sm">Generating suggestion...</span>
+                      </div>
+                    ) : (
+                      <textarea
+                        value={suggestedSentence}
+                        onChange={(e) => setSuggestedSentence(e.target.value)}
+                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
+                        placeholder="Edit the suggested sentence..."
+                      />
+                    )}
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleAddKeyword}
+                      disabled={generatingSuggestion || !suggestedSentence.trim()}
+                      type="button"
+                      className="flex-1 bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle className="w-5 h-5" />
+                      Add to Resume
+                    </button>
+                    <button
+                      onClick={handleSkipKeyword}
+                      type="button"
+                      className="flex-1 bg-white border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-gray-400 transition-colors"
+                    >
+                      Skip
+                    </button>
+                  </div>
+                </div>
+              ) : allDone ? (
+                <div className="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-xl p-8 text-center">
+                  <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-4" />
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">All Done! 🎉</h3>
+                  <p className="text-gray-700 mb-4">
+                    You've reviewed all {missingKeywords.length} missing keywords.
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Your resume now has <strong>{matchedCount}</strong> out of <strong>{totalKeywords}</strong> keywords
+                    ({Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}% match)
+                  </p>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
