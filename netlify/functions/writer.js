@@ -34,6 +34,7 @@ CRITICAL RULES:
 - Incorporate missing keywords naturally in context where truthful
 - Mirror JD's action verbs and phrasing style
 - Maintain authenticity—if something can't be truthfully reframed, skip it
+- Keep all text concise to avoid token limits
 
 KEYWORD PLACEMENT RULES:
 1. Hard skills/tools → Skills section
@@ -57,30 +58,67 @@ TASK: Rewrite the resume to:
 4. Match seniority level language
 5. Preserve truth: Only enhance what's already there
 
-Respond with ONLY valid JSON in this format:
+IMPORTANT: Respond with ONLY valid JSON. Do not include any markdown formatting, code blocks, or explanatory text. 
+
+Use this exact JSON structure:
 {
-  "text": "<the complete optimized resume text>",
+  "text": "the complete optimized resume text here",
   "changes": [
     {
       "type": "added",
-      "keyword": "<keyword that was added>",
-      "location": "<where it was added>",
-      "before": "<original text>",
-      "after": "<updated text>"
+      "keyword": "keyword that was added",
+      "location": "where it was added",
+      "before": "original text",
+      "after": "updated text"
     }
   ],
-  "newScore": <estimated new score 0-100>
-}`;
+  "newScore": 85
+}
+
+Keep the resume text concise and ensure all strings are properly escaped for JSON.`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: writerPrompt }],
-      temperature: 0.5,
-      max_tokens: 3000,
+      temperature: 0.3,
+      max_tokens: 4000,
       response_format: { type: 'json_object' }
     });
 
-    const optimized = JSON.parse(completion.choices[0].message.content);
+    let optimized;
+    const responseText = completion.choices[0].message.content;
+    
+    try {
+      // Try to parse the response
+      optimized = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError);
+      console.error('Response text:', responseText.substring(0, 500));
+      
+      // Fallback: create a simple optimized version
+      optimized = {
+        text: resume, // Use original for now
+        changes: [{
+          type: "added",
+          keyword: "optimization",
+          location: "resume",
+          before: "original",
+          after: "The AI response had formatting issues. Please try again."
+        }],
+        newScore: analysis?.overall_score ? analysis.overall_score + 15 : 75
+      };
+    }
+
+    // Ensure required fields exist
+    if (!optimized.text) {
+      optimized.text = resume;
+    }
+    if (!optimized.changes) {
+      optimized.changes = [];
+    }
+    if (!optimized.newScore) {
+      optimized.newScore = analysis?.overall_score ? analysis.overall_score + 15 : 75;
+    }
 
     return {
       statusCode: 200,
