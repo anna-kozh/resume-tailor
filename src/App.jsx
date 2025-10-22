@@ -136,13 +136,15 @@ const App = () => {
     setLoading(true);
 
     try {
-      const response = await fetch('/.netlify/functions/scorer', {
+      const response = await fetch('/.netlify/functions/ats-audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          resume: resume.text,
-          jobDescription: jobDescription
-        })
+  resume: resume.text,
+  job_description: jobDescription,
+  user_locale: 'en-AU',
+  max_suggestions: 20
+})
       });
 
       if (!response.ok) {
