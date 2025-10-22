@@ -1,62 +1,60 @@
-// HighlightExtension.js
-import { StateEffect, StateField } from "@codemirror/state";
-import { Decoration, EditorView } from "@codemirror/view";
+// src/components/ResumeEditor.js
+import React, { useEffect, useMemo, useRef } from "react";
+import CodeMirror from "@uiw/react-codemirror";
+import { EditorView } from "@codemirror/view";
+import { highlightField, setHighlights } from "./HighlightExtension";
 
-/** Effect to push new keywords into the decoration field */
-export const setHighlights = StateEffect.define();
+function ResumeEditor({
+  value,
+  onChange,
+  keywords = [],
+  className = "",
+}) {
+  const viewRef = useRef(null);
 
-/** Tailwind green bg for matches (works because Tailwind classes are global) */
-const decoMark = Decoration.mark({ class: "bg-green-200" });
+  const extensions = useMemo(
+    () => [
+      EditorView.lineWrapping,
+      highlightField(keywords),
+      EditorView.updateListener.of((v) => {
+        if (v.docChanged) onChange(v.state.doc.toString());
+      }),
+      // Minimal theme to keep look close to your textarea without styling changes
+      EditorView.theme({
+        "&": {
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: "0.875rem",
+          borderRadius: "0.5rem",
+        },
+        ".cm-content": { padding: "12px" },
+        ".cm-scroller": { overflow: "auto", minHeight: "600px" },
+        ".cm-line": { whiteSpace: "pre-wrap" },
+      }),
+    ],
+    [onChange, keywords]
+  );
 
-/** Build a DecorationSet for all keyword matches in the document */
-const buildDecorations = (doc, keywords) => {
-  if (!keywords || !keywords.length) return Decoration.none;
+  // Push new keywords when prop changes
+  useEffect(() => {
+    const view = viewRef.current?.view;
+    if (!view) return;
+    view.dispatch({ effects: setHighlights.of(keywords || []) });
+  }, [keywords]);
 
-  const escaped = keywords
-    .filter(Boolean)
-    .map((k) =>
-      (typeof k === "string" ? k : k.keyword || "")
-        .trim()
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    )
-    .filter(Boolean);
+  return (
+    <div className={className}>
+      <CodeMirror
+        ref={viewRef}
+        value={value}
+        basicSetup={{ lineNumbers: false, highlightActiveLine: false }}
+        autoFocus={false}
+        editable={true}
+        height="600px"
+        extensions={extensions}
+        onChange={(val) => onChange(val)}
+      />
+    </div>
+  );
+}
 
-  if (!escaped.length) return Decoration.none;
-
-  // Word-boundary match, case-insensitive
-  const rx = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
-  const text = doc.toString();
-  const ranges = [];
-  let m;
-  while ((m = rx.exec(text))) {
-    ranges.push(decoMark.range(m.index, m.index + m[0].length));
-  }
-  return ranges.length ? Decoration.set(ranges) : Decoration.none;
-};
-
-/** StateField that holds and updates the highlight decorations */
-export const highlightField = (initialKeywords = []) =>
-  StateField.define({
-    create(state) {
-      return buildDecorations(state.doc, initialKeywords);
-    },
-    update(deco, tr) {
-      // Map existing decorations through document changes
-      deco = deco.map(tr.changes);
-
-      // If keywords are updated externally, rebuild
-      for (const e of tr.effects) {
-        if (e.is(setHighlights)) {
-          return buildDecorations(tr.state.doc, e.value || []);
-        }
-      }
-
-      // If document changed (user typed), recompute using current initialKeywords
-      if (tr.docChanged) {
-        return buildDecorations(tr.state.doc, initialKeywords);
-      }
-
-      return deco;
-    },
-    provide: (f) => EditorView.decorations.from(f),
-  });
+export default ResumeEditor;

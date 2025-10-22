@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, Sparkles, Download, AlertCircle, CheckCircle, Info, RefreshCw } from 'lucide-react';
-import ResumeEditor from './components/ResumeEditor';
+import ResumeEditor from './components/ResumeEditor.js';
 
 const App = () => {
   const [currentView, setCurrentView] = useState('input');
