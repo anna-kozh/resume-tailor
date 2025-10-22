@@ -159,7 +159,10 @@ const App = () => {
       
       // Find location for first keyword if there are missing keywords
       if (data.keyword_coverage?.missing_keywords?.length > 0) {
-        findBestLocationForKeyword(data.keyword_coverage.missing_keywords[0], resume.text);
+        const firstKeyword = data.keyword_coverage.missing_keywords[0];
+        const keywordText = typeof firstKeyword === 'string' ? firstKeyword : firstKeyword.keyword;
+        setSuggestedSentence(keywordText); // Initialize with keyword text
+        findBestLocationForKeyword(firstKeyword, resume.text);
       }
     } catch (err) {
       console.error('Analysis error:', err);
@@ -326,7 +329,10 @@ const App = () => {
   };
 
   const handleAddKeywordManually = () => {
-    // Just add keyword to the end of resume in Skills or as new bullet
+    // Use the editable suggestion text
+    const textToAdd = suggestedSentence || '';
+    if (!textToAdd.trim()) return;
+    
     const currentKeyword = analysis.keyword_coverage.missing_keywords[currentGapIndex];
     const keywordText = typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword;
     
@@ -344,12 +350,12 @@ const App = () => {
       
       if (skillsIndex !== -1 && skillsIndex + 1 < lines.length) {
         // Add to skills section
-        lines[skillsIndex + 1] = lines[skillsIndex + 1].trim() + `, ${keywordText}`;
+        lines[skillsIndex + 1] = lines[skillsIndex + 1].trim() + `, ${textToAdd}`;
         setEditableResume(lines.join('\n'));
       }
     } else {
       // Add as new entry at the end
-      setEditableResume(editableResume.trim() + `\n\nSKILLS:\n${keywordText}`);
+      setEditableResume(editableResume.trim() + `\n\nSKILLS:\n${textToAdd}`);
     }
     
     setAddedKeywords([...addedKeywords, keywordText]);
@@ -361,13 +367,14 @@ const App = () => {
     
     if (nextIndex < analysis.keyword_coverage.missing_keywords.length) {
       setCurrentGapIndex(nextIndex);
-      findBestLocationForKeyword(
-        analysis.keyword_coverage.missing_keywords[nextIndex],
-        editableResume
-      );
+      const nextKeyword = analysis.keyword_coverage.missing_keywords[nextIndex];
+      const nextKeywordText = typeof nextKeyword === 'string' ? nextKeyword : nextKeyword.keyword;
+      setSuggestedSentence(nextKeywordText); // Initialize suggestion for next keyword
+      findBestLocationForKeyword(nextKeyword, editableResume);
     } else {
       setCurrentGapIndex(nextIndex);
       setSuggestedLocation(null);
+      setSuggestedSentence('');
     }
   };
 
@@ -646,56 +653,35 @@ Include your name, contact info, work experience, education, and skills."
               </div>
             </div>
 
-            {/* Right Panel - Stats and Suggestions */}
+            {/* Right Panel - Match Score and Suggestions */}
             <div className="space-y-4">
-              {/* Stats Card */}
+              {/* Match Score Card */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Match Analysis</h3>
+                <h3 className="text-lg font-bold text-gray-900 mb-4">Match Score</h3>
                 
-                <div className="mb-6">
-                  <div className="flex items-baseline gap-2 mb-2">
-                    <span className="text-4xl font-bold text-gray-900">{matchedCount}</span>
-                    <span className="text-xl text-gray-500">/ {totalKeywords} keywords</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
-                    <div 
-                      className="bg-blue-600 h-3 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}%` }}
-                    />
-                  </div>
-                  <p className="text-sm text-gray-600">
-                    {Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}% match
-                  </p>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-5xl font-bold text-blue-600">
+                    {Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}%
+                  </span>
                 </div>
-
-                {/* Matched Keywords */}
-                <div className="mb-6">
-                  <h4 className="text-sm font-semibold text-green-900 mb-2 flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4" />
-                    Keywords Found ({matchedCount})
-                  </h4>
-                  <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                    {analysis.keyword_coverage.matched_keywords?.map((kw, i) => {
-                      const keyword = typeof kw === 'string' ? kw : kw.keyword;
-                      return (
-                        <span key={i} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs border border-green-200">
-                          {keyword}
-                        </span>
-                      );
-                    })}
-                    {addedKeywords.map((kw, i) => (
-                      <span key={`added-${i}`} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs border border-green-200">
-                        {kw} ✨
-                      </span>
-                    ))}
-                  </div>
+                <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
+                  <div 
+                    className="bg-blue-600 h-3 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.round((matchedCount / Math.max(totalKeywords, 1)) * 100)}%` }}
+                  />
                 </div>
+                <p className="text-sm text-gray-600">
+                  <strong>{matchedCount}</strong> of <strong>{totalKeywords}</strong> keywords matched
+                </p>
 
-                {/* Missing Keywords Count */}
-                {missingKeywords.length > 0 && !allDone && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                    <p className="text-sm text-amber-900">
-                      <strong>{missingKeywords.length - currentGapIndex}</strong> keywords remaining to review
+                {/* Suggestions Summary */}
+                {!allDone && missingKeywords.length > 0 && (
+                  <div className="mt-6 pt-6 border-t border-gray-200">
+                    <p className="text-base text-gray-900 font-semibold">
+                      I have <span className="text-blue-600">{missingKeywords.length}</span> {missingKeywords.length === 1 ? 'suggestion' : 'suggestions'} for you
+                    </p>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Review each suggestion below
                     </p>
                   </div>
                 )}
@@ -705,9 +691,9 @@ Include your name, contact info, work experience, education, and skills."
               {!allDone && currentKeyword ? (
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                   <div className="mb-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-sm font-semibold text-gray-700">
-                        Missing Keyword {currentGapIndex + 1} of {missingKeywords.length}
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-semibold text-gray-500">
+                        Suggestion {currentGapIndex + 1} of {missingKeywords.length}
                       </h4>
                       <span className={`text-xs font-semibold px-2 py-1 rounded ${
                         currentKeyword.risk === 'low' ? 'bg-green-100 text-green-800' :
@@ -719,7 +705,7 @@ Include your name, contact info, work experience, education, and skills."
                          '🟡 MEDIUM RISK'}
                       </span>
                     </div>
-                    <h3 className="text-2xl font-bold text-gray-900 mb-2">"{keywordText}"</h3>
+                    <h3 className="text-2xl font-bold text-gray-900 mb-2">Add: "{keywordText}"</h3>
                     <p className="text-sm text-gray-600 mb-4">
                       {currentKeyword.risk === 'low' && 'Safe to add if you have this skill or experience'}
                       {currentKeyword.risk === 'medium' && 'Add if you can discuss this in interviews'}
@@ -727,51 +713,50 @@ Include your name, contact info, work experience, education, and skills."
                     </p>
                   </div>
 
-                  {suggestedLocation ? (
+                  {/* Editable suggestion text */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Suggested text (editable):
+                    </label>
+                    <textarea
+                      value={suggestedSentence || keywordText}
+                      onChange={(e) => setSuggestedSentence(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                      rows={3}
+                      placeholder="Edit the suggestion before applying..."
+                    />
+                    <p className="text-xs text-gray-500 mt-2">
+                      💡 You can edit this text before applying it to your resume
+                    </p>
+                  </div>
+
+                  {suggestedLocation && (
                     <div className="mb-4">
                       <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        💡 Suggested location in your resume:
+                        💡 Best place to add:
                       </label>
-                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-3">
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                         <p className="text-xs text-blue-700 mb-2">Line {suggestedLocation.lineIndex + 1}:</p>
                         <p className="text-sm text-gray-800 italic">"{suggestedLocation.text.trim()}"</p>
                       </div>
-                      <p className="text-xs text-gray-600 mb-3">
-                        You can add "<strong>{keywordText}</strong>" to this line, or manually add it anywhere in your resume.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="mb-4">
-                      <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        Manually add "<strong>{keywordText}</strong>" to a relevant section in your resume (Experience, Skills, or Summary).
-                      </p>
                     </div>
                   )}
 
-                  <div className="space-y-2">
-                    {suggestedLocation && (
-                      <button
-                        onClick={handleAddKeywordAtLocation}
-                        type="button"
-                        className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <CheckCircle className="w-5 h-5" />
-                        Add to Suggested Location
-                      </button>
-                    )}
+                  <div className="flex gap-3">
                     <button
                       onClick={handleAddKeywordManually}
                       type="button"
-                      className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+                      className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
                     >
-                      Add to Skills Section
+                      <CheckCircle className="w-5 h-5" />
+                      Apply
                     </button>
                     <button
                       onClick={handleSkipKeyword}
                       type="button"
-                      className="w-full bg-white border-2 border-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:border-gray-400 transition-colors"
+                      className="flex-1 bg-white border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-gray-400 transition-colors"
                     >
-                      Skip This Keyword
+                      Skip
                     </button>
                   </div>
                 </div>
@@ -780,7 +765,7 @@ Include your name, contact info, work experience, education, and skills."
                   <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-4" />
                   <h3 className="text-2xl font-bold text-gray-900 mb-2">All Done! 🎉</h3>
                   <p className="text-gray-700 mb-4">
-                    You've reviewed all {missingKeywords.length} missing keywords.
+                    You've reviewed all {missingKeywords.length} suggestions.
                   </p>
                   <p className="text-sm text-gray-600">
                     Your resume now has <strong>{matchedCount}</strong> out of <strong>{totalKeywords}</strong> keywords
