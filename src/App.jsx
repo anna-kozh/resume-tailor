@@ -21,11 +21,16 @@ const App = () => {
   const [generatingSuggestion, setGeneratingSuggestion] = useState(false);
   const [suggestedLocation, setSuggestedLocation] = useState(null); // { lineStart, lineEnd, text }
 
+  // NEW: field-level errors
+  const [resumeFieldError, setResumeFieldError] = useState('');
+  const [jdFieldError, setJdFieldError] = useState('');
+
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setError('');
+    setResumeFieldError(''); // clear field error on interaction
     
     if (file.size > 5 * 1024 * 1024) {
       setError('File is too large. Maximum size is 5MB.');
@@ -81,6 +86,7 @@ const App = () => {
       
       setResume({ text, filename: file.name });
       setResumeInput(text);
+      setResumeFieldError(''); // ensure cleared
     };
 
     reader.onerror = () => {
@@ -96,11 +102,29 @@ const App = () => {
     setResumeInput(text);
     setResume({ text, filename: 'pasted-resume.txt' });
     if (error) setError('');
+    if (text && resumeFieldError) setResumeFieldError('');
   };
 
   const analyzeResume = async (e) => {
     if (e) e.preventDefault();
-    
+
+    // NEW: required checks per field
+    let hasError = false;
+    if (!resume.text) {
+      setResumeFieldError('This field is required');
+      hasError = true;
+    } else {
+      setResumeFieldError('');
+    }
+    if (!jobDescription) {
+      setJdFieldError('This field is required');
+      hasError = true;
+    } else {
+      setJdFieldError('');
+    }
+    if (hasError) return;
+
+    // Keep existing min-length rule as-is (not part of the requested change)
     if (!resume.text || jobDescription.length < 200) {
       setError('Please upload a resume and paste a job description (minimum 200 characters)');
       return;
@@ -224,6 +248,9 @@ const App = () => {
     setCurrentGapIndex(0);
     setAddedKeywords([]);
     setSuggestedSentence('');
+    // NEW: clear field errors
+    setResumeFieldError('');
+    setJdFieldError('');
   };
 
   const findBestLocationForKeyword = (keyword, currentResume) => {
@@ -423,7 +450,7 @@ const App = () => {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setInputMethod('paste')}
+                    onClick={() => { setInputMethod('paste'); setResumeFieldError(''); }}
                     className={`py-1.5 px-4 text-sm rounded-lg font-medium transition-colors ${
                       inputMethod === 'paste'
                         ? 'bg-blue-600 text-white'
@@ -434,7 +461,7 @@ const App = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setInputMethod('upload')}
+                    onClick={() => { setInputMethod('upload'); setResumeFieldError(''); }}
                     className={`py-1.5 px-4 text-sm rounded-lg font-medium transition-colors ${
                       inputMethod === 'upload'
                         ? 'bg-blue-600 text-white'
@@ -465,6 +492,10 @@ Include your name, contact info, work experience, education, and skills."
                       </span>
                     )}
                   </div>
+                  {/* NEW: resume required error (paste) */}
+                  {resumeFieldError ? (
+                    <p className="text-sm text-red-600 mt-2">This field is required</p>
+                  ) : null}
                 </div>
               )}
 
@@ -494,6 +525,10 @@ Include your name, contact info, work experience, education, and skills."
                       <span>Uploaded: {resume.filename}</span>
                     </div>
                   )}
+                  {/* NEW: resume required error (upload) */}
+                  {resumeFieldError ? (
+                    <p className="text-sm text-red-600 mt-2">This field is required</p>
+                  ) : null}
                   
                   <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
                     <p className="text-xs font-semibold text-blue-900 mb-1">💡 How to convert to plain text:</p>
@@ -513,7 +548,7 @@ Include your name, contact info, work experience, education, and skills."
               </label>
               <textarea
                 value={jobDescription}
-                onChange={(e) => setJobDescription(e.target.value)}
+                onChange={(e) => { setJobDescription(e.target.value); if (e.target.value) setJdFieldError(''); }}
                 placeholder="Paste the full job description here..."
                 className="w-full h-64 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
@@ -526,6 +561,10 @@ Include your name, contact info, work experience, education, and skills."
                   </span>
                 )}
               </div>
+              {/* NEW: JD required error */}
+              {jdFieldError ? (
+                <p className="text-sm text-red-600 mt-2">This field is required</p>
+              ) : null}
             </div>
 
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
@@ -539,7 +578,7 @@ Include your name, contact info, work experience, education, and skills."
           <button
             onClick={analyzeResume}
             type="button"
-            disabled={!resume.text || jobDescription.length < 200 || loading}
+            disabled={loading} // enabled on load; only disabled while loading
             className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           >
             <Sparkles className="w-5 h-5" />
