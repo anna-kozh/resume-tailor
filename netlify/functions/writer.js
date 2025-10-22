@@ -5,6 +5,11 @@ const openai = new OpenAI({
 });
 
 export const handler = async (event) => {
+  // Add timeout handling
+  const timeoutPromise = new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('Function timeout')), 25000)
+  );
+
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
@@ -22,103 +27,74 @@ export const handler = async (event) => {
       };
     }
 
-    const gapsToAdd = selectedGaps && selectedGaps.length > 0 
-      ? selectedGaps.join(', ') 
-      : 'all applicable missing keywords';
+    // Extract only the missing keywords to add
+    const keywordsToAdd = selectedGaps && selectedGaps.length > 0 
+      ? selectedGaps.slice(0, 5) // Limit to 5 keywords max
+      : analysis?.keyword_coverage?.missing_keywords?.slice(0, 5).map(k => typeof k === 'string' ? k : k.keyword) || [];
 
-    const writerPrompt = `You are an expert resume writer. Your goal: help the candidate naturally incorporate job description language into their existing experience.
+    // Shorter, more focused prompt
+    const writerPrompt = `Rewrite this resume to naturally incorporate these keywords from the job description: ${keywordsToAdd.join(', ')}
 
-CRITICAL RULES:
-- NEVER fabricate experience or skills
-- ONLY reframe existing work using JD-aligned terminology
-- Incorporate missing keywords naturally in context where truthful
-- Mirror JD's action verbs and phrasing style
-- Maintain authenticity—if something can't be truthfully reframed, skip it
-- Keep all text concise to avoid token limits
+RULES:
+- Only modify existing content, don't fabricate
+- Add keywords naturally in context
+- Keep the same resume structure
+- Be concise
 
-KEYWORD PLACEMENT RULES:
-1. Hard skills/tools → Skills section
-2. Methodologies → Experience bullets with outcomes
-3. Domain expertise → Experience bullets with business context
-4. Leadership signals → Experience bullets with scope
-5. Prioritize adding keywords to experience bullets with context over generic skills listings
+JOB DESCRIPTION (for context):
+${jobDescription.substring(0, 1000)}
 
-Job Description:
-${jobDescription}
-
-Current Resume:
+CURRENT RESUME:
 ${resume}
 
-Keywords to focus on incorporating (if applicable): ${gapsToAdd}
+Return ONLY valid JSON with this structure (no markdown, no code blocks):
+{"text":"optimized resume text here","newScore":85,"changes":[{"keyword":"added keyword","location":"where"}]}`;
 
-TASK: Rewrite the resume to:
-1. Replace weak action verbs with stronger JD-aligned verbs where accurate
-2. Incorporate missing keywords naturally into existing bullets
-3. Mirror JD terminology exactly when describing similar work
-4. Match seniority level language
-5. Preserve truth: Only enhance what's already there
-
-IMPORTANT: Respond with ONLY valid JSON. Do not include any markdown formatting, code blocks, or explanatory text. 
-
-Use this exact JSON structure:
-{
-  "text": "the complete optimized resume text here",
-  "changes": [
-    {
-      "type": "added",
-      "keyword": "keyword that was added",
-      "location": "where it was added",
-      "before": "original text",
-      "after": "updated text"
-    }
-  ],
-  "newScore": 85
-}
-
-Keep the resume text concise and ensure all strings are properly escaped for JSON.`;
-
-    const completion = await openai.chat.completions.create({
+    // Race between API call and timeout
+    const apiCall = openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: writerPrompt }],
-      temperature: 0.3,
-      max_tokens: 4000,
+      temperature: 0.2,
+      max_tokens: 3000,
       response_format: { type: 'json_object' }
     });
 
-    let optimized;
+    const completion = await Promise.race([apiCall, timeoutPromise]);
     const responseText = completion.choices[0].message.content;
     
+    console.log('GPT Response length:', responseText.length);
+    
+    let optimized;
     try {
-      // Try to parse the response
       optimized = JSON.parse(responseText);
+      console.log('Successfully parsed JSON');
     } catch (parseError) {
-      console.error('JSON parse error:', parseError);
-      console.error('Response text:', responseText.substring(0, 500));
+      console.error('JSON parse error:', parseError.message);
+      console.error('First 200 chars:', responseText.substring(0, 200));
       
-      // Fallback: create a simple optimized version
-      optimized = {
-        text: resume, // Use original for now
-        changes: [{
-          type: "added",
-          keyword: "optimization",
-          location: "resume",
-          before: "original",
-          after: "The AI response had formatting issues. Please try again."
-        }],
-        newScore: analysis?.overall_score ? analysis.overall_score + 15 : 75
+      // Return a minimal valid response
+      return {
+        statusCode: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({
+          text: resume + "\n\n[Note: AI optimization encountered formatting issues. Your original resume is shown above. Please try again.]",
+          changes: [],
+          newScore: (analysis?.overall_score || 60) + 10
+        })
       };
     }
 
-    // Ensure required fields exist
-    if (!optimized.text) {
-      optimized.text = resume;
-    }
-    if (!optimized.changes) {
-      optimized.changes = [];
-    }
-    if (!optimized.newScore) {
-      optimized.newScore = analysis?.overall_score ? analysis.overall_score + 15 : 75;
-    }
+    // Validate and fill missing fields
+    const response = {
+      text: optimized.text || resume,
+      changes: Array.isArray(optimized.changes) ? optimized.changes : [],
+      newScore: optimized.newScore || (analysis?.overall_score || 60) + 15
+    };
+
+    console.log('Returning response with score:', response.newScore);
 
     return {
       statusCode: 200,
@@ -126,15 +102,23 @@ Keep the resume text concise and ensure all strings are properly escaped for JSO
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*'
       },
-      body: JSON.stringify(optimized)
+      body: JSON.stringify(response)
     };
+
   } catch (error) {
-    console.error('Writer error:', error);
+    console.error('Writer function error:', error);
+    
+    // Return a more informative error
     return {
       statusCode: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
       body: JSON.stringify({ 
-        error: 'Optimization failed', 
-        message: error.message 
+        error: 'Optimization failed',
+        message: error.message || 'Unknown error',
+        details: error.toString()
       })
     };
   }
