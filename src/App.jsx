@@ -347,6 +347,11 @@ const App = () => {
     setEditableResume(e.target.value);
   };
 
+  const handleContentEditableChange = (e) => {
+    const text = e.target.innerText;
+    setEditableResume(text);
+  };
+
   const recalculateKeywords = () => {
     if (!analysis || !editableResume) return;
     
@@ -586,13 +591,33 @@ Include your name, contact info, work experience, education, and skills."
             <div className="space-y-4">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-bold text-gray-900 mb-4">Your Resume (Editable)</h3>
-                <textarea
-                  value={editableResume}
-                  onChange={handleResumeEdit}
-                  onBlur={recalculateKeywords}
-                  className="w-full h-[600px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
-                  placeholder="Your resume text..."
-                />
+                
+                {/* Highlighted view overlay */}
+                <div className="relative">
+                  <div 
+                    className="absolute inset-0 w-full h-[600px] px-4 py-3 rounded-lg pointer-events-none overflow-auto whitespace-pre-wrap font-mono text-sm"
+                    style={{ 
+                      color: 'transparent',
+                      background: 'transparent',
+                      zIndex: 1
+                    }}
+                    dangerouslySetInnerHTML={{ 
+                      __html: highlightKeywords(editableResume).replace(/\n/g, '<br/>') 
+                    }}
+                  />
+                  <textarea
+                    value={editableResume}
+                    onChange={handleResumeEdit}
+                    onBlur={recalculateKeywords}
+                    className="relative w-full h-[600px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
+                    style={{
+                      background: 'transparent',
+                      zIndex: 2
+                    }}
+                    placeholder="Your resume text..."
+                  />
+                </div>
+                
                 <div className="mt-4 flex gap-3">
                   <button
                     onClick={copyToClipboard}
