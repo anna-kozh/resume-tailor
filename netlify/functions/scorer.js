@@ -139,7 +139,19 @@ Focus on extracting keywords from the ENTIRE job description consistently.`;
       });
     }
 
+    // Recalculate overall score based on keywords only
+    const totalKeywords = (analysis.keyword_coverage?.matched_keywords?.length || 0) + 
+                         (analysis.keyword_coverage?.missing_keywords?.length || 0);
+    const matchedKeywords = analysis.keyword_coverage?.matched_keywords?.length || 0;
+    
+    if (totalKeywords > 0) {
+      analysis.overall_score = Math.round((matchedKeywords / totalKeywords) * 100);
+      analysis.keyword_coverage.score = analysis.overall_score; // For backwards compatibility
+      analysis.keyword_coverage.max_score = 100;
+    }
+
     console.log('Analysis complete. Score:', analysis.overall_score);
+    console.log('Keywords:', matchedKeywords, '/', totalKeywords);
     console.log('Missing keywords with risk:', analysis.keyword_coverage?.missing_keywords?.length || 0);
 
     return {

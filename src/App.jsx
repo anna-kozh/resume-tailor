@@ -371,15 +371,6 @@ const App = () => {
     }
   };
 
-  const handleResumeEdit = (e) => {
-    setEditableResume(e.target.value);
-  };
-
-  const handleContentEditableChange = (e) => {
-    const text = e.target.innerText;
-    setEditableResume(text);
-  };
-
   const recalculateKeywords = () => {
     if (!analysis || !editableResume) return;
     
@@ -403,24 +394,6 @@ const App = () => {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(editableResume);
     alert('Resume copied to clipboard!');
-  };
-
-  const highlightKeywords = (text) => {
-    if (!analysis) return text;
-    
-    let highlighted = text;
-    const allMatchedKeywords = [
-      ...(analysis.keyword_coverage.matched_keywords || []),
-      ...addedKeywords
-    ];
-    
-    allMatchedKeywords.forEach(kw => {
-      const keyword = typeof kw === 'string' ? kw : kw.keyword;
-      const regex = new RegExp(`(${keyword})`, 'gi');
-      highlighted = highlighted.replace(regex, '<mark class="bg-green-200">$1</mark>');
-    });
-    
-    return highlighted;
   };
 
   if (currentView === 'input') {
