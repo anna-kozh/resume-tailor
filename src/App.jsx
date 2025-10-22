@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, Sparkles, Download, AlertCircle, CheckCircle, Info, RefreshCw } from 'lucide-react';
+import ResumeEditor from './components/ResumeEditor';
 
 const App = () => {
   const [currentView, setCurrentView] = useState('input');
@@ -603,41 +604,28 @@ Include your name, contact info, work experience, education, and skills."
     const keywordText = currentKeyword ? (typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword) : '';
     const allDone = currentGapIndex >= missingKeywords.length;
 
+    // Build highlight keywords = matched + added (same behavior as before)
+    const highlightKeywordsList = [
+      ...(analysis.keyword_coverage.matched_keywords || []).map(kw => typeof kw === 'string' ? kw : kw.keyword),
+      ...addedKeywords
+    ];
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 py-8 px-4">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left Panel - Editable Resume */}
+            {/* Left Panel - Editable Resume (CodeMirror, no overlay) */}
             <div className="space-y-4">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-bold text-gray-900 mb-4">Your Resume (Editable)</h3>
-                
-                {/* Highlighted view overlay */}
-                <div className="relative">
-                  <div 
-                    className="absolute inset-0 w-full h-[600px] px-4 py-3 rounded-lg pointer-events-none overflow-auto whitespace-pre-wrap font-mono text-sm"
-                    style={{ 
-                      color: 'transparent',
-                      background: 'transparent',
-                      zIndex: 1
-                    }}
-                    dangerouslySetInnerHTML={{ 
-                      __html: highlightKeywords(editableResume).replace(/\n/g, '<br/>') 
-                    }}
-                  />
-                  <textarea
-                    value={editableResume}
-                    onChange={handleResumeEdit}
-                    onBlur={recalculateKeywords}
-                    className="relative w-full h-[600px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm"
-                    style={{
-                      background: 'transparent',
-                      zIndex: 2
-                    }}
-                    placeholder="Your resume text..."
-                  />
-                </div>
-                
+
+                <ResumeEditor
+                  value={editableResume}
+                  onChange={setEditableResume}
+                  keywords={highlightKeywordsList}
+                  className="border border-gray-300 rounded-lg"
+                />
+
                 <div className="mt-4 flex gap-3">
                   <button
                     onClick={copyToClipboard}
