@@ -36,7 +36,7 @@ export async function handler(event) {
     resume,
     user_locale = 'en-AU',
     max_suggestions = 20,
-    model = process.env.OPENAI_MODEL || 'gpt-5',
+    model = process.env.OPENAI_MODEL || 'gpt-4o-mini',
     temperature = 0.2,
     top_p = 0.9,
   } = payload;
