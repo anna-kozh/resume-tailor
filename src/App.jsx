@@ -454,7 +454,10 @@ Include your name, contact info, work experience, education, and skills."
                 <span>{analysis.keyword_coverage.score}/{analysis.keyword_coverage.max_score}</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">
-                <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${(analysis.keyword_coverage.score / analysis.keyword_coverage.max_score) * 100}%` }} />
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-500" 
+                  style={{ width: `${Math.round((analysis.keyword_coverage.score / analysis.keyword_coverage.max_score) * 100)}%` }} 
+                />
               </div>
             </div>
             <div>
@@ -463,7 +466,10 @@ Include your name, contact info, work experience, education, and skills."
                 <span>{analysis.language_alignment.score}/{analysis.language_alignment.max_score}</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">
-                <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${(analysis.language_alignment.score / analysis.language_alignment.max_score) * 100}%` }} />
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-500" 
+                  style={{ width: `${Math.round((analysis.language_alignment.score / analysis.language_alignment.max_score) * 100)}%` }} 
+                />
               </div>
             </div>
           </div>
