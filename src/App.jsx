@@ -501,14 +501,50 @@ Include your name, contact info, work experience, education, and skills."
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
             <h3 className="text-xl font-bold text-gray-900">Missing Keywords</h3>
             
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
+              <p className="font-semibold text-blue-900 mb-2">📊 Risk Levels Explained:</p>
+              <ul className="space-y-1 text-blue-800">
+                <li>• <strong>🟢 Low Risk:</strong> Common skills/tools - add if you have basic experience</li>
+                <li>• <strong>🟡 Medium Risk:</strong> Specific methodologies - be ready to discuss in detail</li>
+                <li>• <strong>🔴 High Risk:</strong> Job titles/expertise - only add if this was your actual role</li>
+              </ul>
+            </div>
+            
             <div className="space-y-3">
               {analysis.keyword_coverage.missing_keywords.map((gap, i) => {
                 const gapKeyword = typeof gap === 'string' ? gap : gap.keyword;
                 const gapRisk = gap.risk || 'medium';
                 const gapPoints = gap.points || 2;
+                
+                // Risk styling
+                const riskStyles = {
+                  low: { 
+                    bg: 'bg-green-50', 
+                    border: 'border-green-200', 
+                    text: 'text-green-800',
+                    icon: '🟢',
+                    label: 'LOW RISK'
+                  },
+                  medium: { 
+                    bg: 'bg-amber-50', 
+                    border: 'border-amber-200', 
+                    text: 'text-amber-800',
+                    icon: '🟡',
+                    label: 'MEDIUM RISK'
+                  },
+                  high: { 
+                    bg: 'bg-red-50', 
+                    border: 'border-red-200', 
+                    text: 'text-red-800',
+                    icon: '🔴',
+                    label: 'HIGH RISK'
+                  }
+                };
+                
+                const style = riskStyles[gapRisk] || riskStyles.medium;
 
                 return (
-                  <div key={i} className="border border-gray-200 rounded-lg p-4">
+                  <div key={i} className={`border ${style.border} ${style.bg} rounded-lg p-4`}>
                     <div className="flex items-center gap-2 mb-2">
                       <input
                         type="checkbox"
@@ -523,12 +559,18 @@ Include your name, contact info, work experience, education, and skills."
                         }}
                         className="w-4 h-4"
                       />
-                      <label htmlFor={`gap-${i}`} className="font-medium text-gray-900">
-                        "{gapKeyword}" <span className="text-blue-600">+{gapPoints} pts</span>
+                      <label htmlFor={`gap-${i}`} className="flex-1 font-medium text-gray-900">
+                        "{gapKeyword}"
                       </label>
+                      <span className={`text-xs font-semibold ${style.text} px-2 py-1 rounded`}>
+                        {style.icon} {style.label}
+                      </span>
+                      <span className="text-blue-600 font-semibold">+{gapPoints} pts</span>
                     </div>
-                    <p className="text-sm text-gray-600 ml-6">
-                      Risk: {gapRisk.toUpperCase()}
+                    <p className={`text-sm ${style.text} ml-6`}>
+                      {gapRisk === 'low' && 'Safe to add if you have this skill or have used this tool'}
+                      {gapRisk === 'medium' && 'Add if you can discuss this methodology in interviews'}
+                      {gapRisk === 'high' && '⚠️ Only add if this was your actual title/role - high interview scrutiny'}
                     </p>
                   </div>
                 );
