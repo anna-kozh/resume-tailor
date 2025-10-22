@@ -19,6 +19,7 @@ const App = () => {
   const [suggestedSentence, setSuggestedSentence] = useState('');
   const [addedKeywords, setAddedKeywords] = useState([]);
   const [generatingSuggestion, setGeneratingSuggestion] = useState(false);
+  const [suggestedLocation, setSuggestedLocation] = useState(null); // { lineStart, lineEnd, text }
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
@@ -131,9 +132,9 @@ const App = () => {
       setAddedKeywords([]);
       setCurrentView('results');
       
-      // Generate first suggestion if there are missing keywords
+      // Find location for first keyword if there are missing keywords
       if (data.keyword_coverage?.missing_keywords?.length > 0) {
-        generateSuggestionForKeyword(data.keyword_coverage.missing_keywords[0], resume.text);
+        findBestLocationForKeyword(data.keyword_coverage.missing_keywords[0], resume.text);
       }
     } catch (err) {
       console.error('Analysis error:', err);
@@ -225,59 +226,105 @@ const App = () => {
     setSuggestedSentence('');
   };
 
-  const generateSuggestionForKeyword = async (keyword, currentResume) => {
-    setGeneratingSuggestion(true);
-    setSuggestedSentence('');
+  const findBestLocationForKeyword = (keyword, currentResume) => {
+    const keywordText = typeof keyword === 'string' ? keyword : keyword.keyword;
+    const lines = currentResume.split('\n');
     
-    try {
-      const keywordText = typeof keyword === 'string' ? keyword : keyword.keyword;
+    // Look for relevant sections: Experience, Skills, or last bullet point in recent role
+    let bestMatch = null;
+    let bestScore = 0;
+    
+    // Search for experience section or recent roles
+    const experienceKeywords = ['experience', 'work', 'freelance', 'designer', 'lead', 'senior'];
+    const aiKeywords = ['ai', 'design', 'product', 'ux', 'user'];
+    
+    lines.forEach((line, index) => {
+      const lowerLine = line.toLowerCase();
+      let score = 0;
       
-      // Simple prompt to generate a single sentence
-      const prompt = `Add the keyword "${keywordText}" to this resume naturally. 
-
-Resume excerpt (last 500 chars):
-${currentResume.slice(-500)}
-
-Generate ONE concise sentence that incorporates "${keywordText}" naturally. The sentence should fit in an Experience section bullet point. Return only the sentence, nothing else.`;
-
-      const response = await fetch('/.netlify/functions/writer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          resume: currentResume,
-          jobDescription: jobDescription,
-          analysis: analysis,
-          selectedGaps: [keywordText],
-          generateSuggestion: true,
-          prompt: prompt
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setSuggestedSentence(data.suggestion || `• Experienced with ${keywordText} to enhance project outcomes`);
-      } else {
-        setSuggestedSentence(`• Experienced with ${keywordText} to enhance project outcomes`);
+      // Prioritize lines with bullets
+      if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
+        score += 2;
       }
-    } catch (error) {
-      console.error('Error generating suggestion:', error);
-      const keywordText = typeof keyword === 'string' ? keyword : keyword.keyword;
-      setSuggestedSentence(`• Experienced with ${keywordText} to enhance project outcomes`);
-    } finally {
-      setGeneratingSuggestion(false);
-    }
+      
+      // Prioritize experience-related lines
+      experienceKeywords.forEach(kw => {
+        if (lowerLine.includes(kw)) score += 1;
+      });
+      
+      // Prioritize AI/design related lines
+      aiKeywords.forEach(kw => {
+        if (lowerLine.includes(kw)) score += 1;
+      });
+      
+      // Prefer lines with some content (not headers)
+      if (line.length > 40) score += 1;
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = { lineIndex: index, text: line };
+      }
+    });
+    
+    setSuggestedLocation(bestMatch);
   };
 
-  const handleAddKeyword = () => {
-    if (!suggestedSentence.trim()) return;
+  const handleAddKeywordAtLocation = () => {
+    if (!suggestedLocation) return;
     
-    const newResume = editableResume + '\n' + suggestedSentence;
-    setEditableResume(newResume);
-    
+    const lines = editableResume.split('\n');
     const currentKeyword = analysis.keyword_coverage.missing_keywords[currentGapIndex];
     const keywordText = typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword;
+    
+    // Add keyword to the suggested line
+    const lineIndex = suggestedLocation.lineIndex;
+    const originalLine = lines[lineIndex];
+    
+    // Add keyword at the end of the line (before any period)
+    let newLine = originalLine.trim();
+    if (newLine.endsWith('.')) {
+      newLine = newLine.slice(0, -1) + `, incorporating ${keywordText}.`;
+    } else {
+      newLine = newLine + `, incorporating ${keywordText}`;
+    }
+    
+    lines[lineIndex] = newLine;
+    const newResume = lines.join('\n');
+    
+    setEditableResume(newResume);
     setAddedKeywords([...addedKeywords, keywordText]);
     
+    handleSkipKeyword();
+  };
+
+  const handleAddKeywordManually = () => {
+    // Just add keyword to the end of resume in Skills or as new bullet
+    const currentKeyword = analysis.keyword_coverage.missing_keywords[currentGapIndex];
+    const keywordText = typeof currentKeyword === 'string' ? currentKeyword : currentKeyword.keyword;
+    
+    // Check if there's a Skills section
+    if (editableResume.toLowerCase().includes('skills')) {
+      const lines = editableResume.split('\n');
+      let skillsIndex = -1;
+      
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes('skills')) {
+          skillsIndex = i;
+          break;
+        }
+      }
+      
+      if (skillsIndex !== -1 && skillsIndex + 1 < lines.length) {
+        // Add to skills section
+        lines[skillsIndex + 1] = lines[skillsIndex + 1].trim() + `, ${keywordText}`;
+        setEditableResume(lines.join('\n'));
+      }
+    } else {
+      // Add as new entry at the end
+      setEditableResume(editableResume.trim() + `\n\nSKILLS:\n${keywordText}`);
+    }
+    
+    setAddedKeywords([...addedKeywords, keywordText]);
     handleSkipKeyword();
   };
 
@@ -286,12 +333,13 @@ Generate ONE concise sentence that incorporates "${keywordText}" naturally. The 
     
     if (nextIndex < analysis.keyword_coverage.missing_keywords.length) {
       setCurrentGapIndex(nextIndex);
-      generateSuggestionForKeyword(
+      findBestLocationForKeyword(
         analysis.keyword_coverage.missing_keywords[nextIndex],
         editableResume
       );
     } else {
-      setCurrentGapIndex(nextIndex); // Show completion state
+      setCurrentGapIndex(nextIndex);
+      setSuggestedLocation(null);
     }
   };
 
@@ -639,48 +687,58 @@ Include your name, contact info, work experience, education, and skills."
                       </span>
                     </div>
                     <h3 className="text-2xl font-bold text-gray-900 mb-2">"{keywordText}"</h3>
-                    <p className="text-sm text-gray-600">
+                    <p className="text-sm text-gray-600 mb-4">
                       {currentKeyword.risk === 'low' && 'Safe to add if you have this skill or experience'}
                       {currentKeyword.risk === 'medium' && 'Add if you can discuss this in interviews'}
                       {currentKeyword.risk === 'high' && '⚠️ Only add if this was your actual role/title'}
                     </p>
                   </div>
 
-                  <div className="mb-4">
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Suggested Addition (Editable):
-                    </label>
-                    {generatingSuggestion ? (
-                      <div className="flex items-center gap-2 text-gray-500 py-8">
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span className="text-sm">Generating suggestion...</span>
+                  {suggestedLocation ? (
+                    <div className="mb-4">
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        💡 Suggested location in your resume:
+                      </label>
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-3">
+                        <p className="text-xs text-blue-700 mb-2">Line {suggestedLocation.lineIndex + 1}:</p>
+                        <p className="text-sm text-gray-800 italic">"{suggestedLocation.text.trim()}"</p>
                       </div>
-                    ) : (
-                      <textarea
-                        value={suggestedSentence}
-                        onChange={(e) => setSuggestedSentence(e.target.value)}
-                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
-                        placeholder="Edit the suggested sentence..."
-                      />
-                    )}
-                  </div>
+                      <p className="text-xs text-gray-600 mb-3">
+                        You can add "<strong>{keywordText}</strong>" to this line, or manually add it anywhere in your resume.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mb-4">
+                      <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        Manually add "<strong>{keywordText}</strong>" to a relevant section in your resume (Experience, Skills, or Summary).
+                      </p>
+                    </div>
+                  )}
 
-                  <div className="flex gap-3">
+                  <div className="space-y-2">
+                    {suggestedLocation && (
+                      <button
+                        onClick={handleAddKeywordAtLocation}
+                        type="button"
+                        className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle className="w-5 h-5" />
+                        Add to Suggested Location
+                      </button>
+                    )}
                     <button
-                      onClick={handleAddKeyword}
-                      disabled={generatingSuggestion || !suggestedSentence.trim()}
+                      onClick={handleAddKeywordManually}
                       type="button"
-                      className="flex-1 bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                      className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
                     >
-                      <CheckCircle className="w-5 h-5" />
-                      Add to Resume
+                      Add to Skills Section
                     </button>
                     <button
                       onClick={handleSkipKeyword}
                       type="button"
-                      className="flex-1 bg-white border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-gray-400 transition-colors"
+                      className="w-full bg-white border-2 border-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:border-gray-400 transition-colors"
                     >
-                      Skip
+                      Skip This Keyword
                     </button>
                   </div>
                 </div>
