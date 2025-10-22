@@ -22,6 +22,9 @@ export const handler = async (event) => {
       };
     }
 
+    console.log('Resume length:', resume.length);
+    console.log('First 100 chars:', resume.substring(0, 100));
+
     // Get top 3-5 keywords to add
     const keywordsToAdd = selectedGaps && selectedGaps.length > 0 
       ? selectedGaps.slice(0, 3)
@@ -29,8 +32,9 @@ export const handler = async (event) => {
           typeof k === 'string' ? k : k.keyword
         ) || [];
 
+    console.log('Keywords to add:', keywordsToAdd);
+
     if (keywordsToAdd.length === 0) {
-      // No keywords to add, return original with slight score bump
       return {
         statusCode: 200,
         headers: {
@@ -40,63 +44,88 @@ export const handler = async (event) => {
         body: JSON.stringify({
           text: resume,
           changes: [{
-            keyword: 'No changes needed',
-            location: 'Resume already well-optimized'
+            keyword: 'No additional keywords needed',
+            location: 'Resume already optimized'
           }],
           newScore: (analysis?.overall_score || 70) + 5
         })
       };
     }
 
-    // Ultra-short, focused prompt
-    const writerPrompt = `Add these keywords naturally to the resume: ${keywordsToAdd.join(', ')}
+    // Simple approach: Add keywords to the resume intelligently
+    const writerPrompt = `You are helping optimize a resume. Add these keywords naturally: ${keywordsToAdd.join(', ')}
 
-Resume:
-${resume.substring(0, 2000)}
+ORIGINAL RESUME:
+${resume}
 
-Return only JSON (no markdown):
-{"text":"modified resume with keywords added","newScore":${(analysis?.overall_score || 60) + 20},"changes":[{"keyword":"word added","location":"section"}]}`;
+INSTRUCTIONS:
+1. Find the most appropriate places in the resume to add these keywords
+2. Add them naturally - either in existing bullet points or in a Skills section
+3. Keep all original content
+4. Maintain the same format as the original
+5. Return the COMPLETE modified resume
 
-    console.log('Calling OpenAI with', keywordsToAdd.length, 'keywords');
+Respond with valid JSON only:
+{
+  "text": "the complete optimized resume text here - include ALL original content with keywords added",
+  "changes": [{"keyword": "added keyword", "location": "where you added it"}],
+  "newScore": ${Math.min((analysis?.overall_score || 60) + 20, 95)}
+}`;
+
+    console.log('Calling OpenAI...');
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // Use mini for speed
+      model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: writerPrompt }],
-      temperature: 0.1,
-      max_tokens: 2000,
+      temperature: 0.2,
+      max_tokens: 3000,
       response_format: { type: 'json_object' }
     });
 
     const responseText = completion.choices[0].message.content;
-    console.log('Got response, length:', responseText.length);
+    console.log('Response received, length:', responseText.length);
     
     let optimized;
     try {
       optimized = JSON.parse(responseText);
+      console.log('JSON parsed successfully');
+      console.log('Optimized text length:', optimized.text?.length);
     } catch (parseError) {
-      console.error('Parse error:', parseError.message);
+      console.error('JSON Parse error:', parseError.message);
       
-      // Fallback: manually add keywords
+      // Manual fallback: add keywords to skills section
       let modifiedResume = resume;
       const changes = [];
       
-      // Simple keyword insertion in a Skills section or at end
-      if (modifiedResume.toLowerCase().includes('skills')) {
-        // Add to existing skills section
-        const skillsIndex = modifiedResume.toLowerCase().indexOf('skills');
-        const beforeSkills = modifiedResume.substring(0, skillsIndex + 10);
-        const afterSkills = modifiedResume.substring(skillsIndex + 10);
-        modifiedResume = beforeSkills + keywordsToAdd.join(', ') + ', ' + afterSkills;
+      // Look for a Skills section (case-insensitive)
+      const skillsMatch = modifiedResume.match(/skills:?/i);
+      
+      if (skillsMatch) {
+        const skillsIndex = modifiedResume.toLowerCase().indexOf(skillsMatch[0].toLowerCase());
+        const endOfSkillsLine = modifiedResume.indexOf('\n', skillsIndex);
+        
+        if (endOfSkillsLine > skillsIndex) {
+          const beforeSkills = modifiedResume.substring(0, endOfSkillsLine);
+          const afterSkills = modifiedResume.substring(endOfSkillsLine);
+          modifiedResume = beforeSkills + ', ' + keywordsToAdd.join(', ') + afterSkills;
+        } else {
+          modifiedResume = modifiedResume + ', ' + keywordsToAdd.join(', ');
+        }
+        
         changes.push({
           keyword: keywordsToAdd.join(', '),
-          location: 'Skills section'
+          location: 'Skills section',
+          before: 'Original skills list',
+          after: 'Added: ' + keywordsToAdd.join(', ')
         });
       } else {
-        // Add new skills section
-        modifiedResume = modifiedResume + '\n\nSkills: ' + keywordsToAdd.join(', ');
+        // No skills section found, add one
+        modifiedResume = modifiedResume.trim() + '\n\nSKILLS:\n' + keywordsToAdd.join(', ');
         changes.push({
           keyword: keywordsToAdd.join(', '),
-          location: 'New Skills section'
+          location: 'New Skills section',
+          before: 'No skills section',
+          after: 'Created Skills section with: ' + keywordsToAdd.join(', ')
         });
       }
       
@@ -114,14 +143,21 @@ Return only JSON (no markdown):
       };
     }
 
-    // Validate response
+    // Ensure we have valid data
+    if (!optimized.text || optimized.text.length < 100) {
+      console.error('Invalid optimized text, using fallback');
+      optimized.text = resume + '\n\n[Keywords to add: ' + keywordsToAdd.join(', ') + ']';
+    }
+
     const response = {
-      text: optimized.text || resume,
-      changes: Array.isArray(optimized.changes) ? optimized.changes : [],
+      text: optimized.text,
+      changes: Array.isArray(optimized.changes) && optimized.changes.length > 0 
+        ? optimized.changes 
+        : [{ keyword: keywordsToAdd.join(', '), location: 'Added to resume' }],
       newScore: optimized.newScore || (analysis?.overall_score || 60) + 15
     };
 
-    console.log('Success! New score:', response.newScore);
+    console.log('Returning successful response');
 
     return {
       statusCode: 200,
@@ -133,7 +169,7 @@ Return only JSON (no markdown):
     };
 
   } catch (error) {
-    console.error('Writer error:', error);
+    console.error('Writer function error:', error);
     
     return {
       statusCode: 500,
@@ -143,7 +179,8 @@ Return only JSON (no markdown):
       },
       body: JSON.stringify({ 
         error: 'Optimization failed',
-        message: error.message
+        message: error.message,
+        stack: error.stack
       })
     };
   }

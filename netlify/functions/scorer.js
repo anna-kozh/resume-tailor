@@ -56,7 +56,9 @@ Provide your analysis in the following JSON structure (respond with ONLY valid J
   }
 }
 
-Focus on extracting 15-20 most important keywords from the JD and checking which appear in the resume.`;
+Focus on extracting 15-20 most important keywords from the ENTIRE job description and checking which appear in the resume.`;
+
+    console.log('Scorer - JD length:', jobDescription.length, 'Resume length:', resume.length);
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
