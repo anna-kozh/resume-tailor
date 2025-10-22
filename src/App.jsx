@@ -18,14 +18,82 @@ const App = () => {
     if (!file) return;
 
     setError('');
+    
+    // Check file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setError('File is too large. Maximum size is 5MB.');
+      return;
+    }
+
     const reader = new FileReader();
 
     reader.onload = async (event) => {
-      const text = event.target.result;
+      let text = event.target.result;
+      
+      // Detect and handle RTF format
+      if (text.startsWith('{\\rtf') || text.includes('\\rtf1')) {
+        setError('❌ RTF format detected. Please convert your file to plain text (.txt) first.\n\nHow to convert:\n• Mac: Open in TextEdit → Format → Make Plain Text → Save\n• Windows: Open in Word → Save As → Plain Text (.txt)');
+        return;
+      }
+      
+      // Detect LaTeX format
+      if (text.includes('\\documentclass') || text.includes('\\begin{document}') || 
+          text.includes('\\item') || text.includes('\\textbf')) {
+        setError('❌ LaTeX format detected. Please convert to plain text first.');
+        return;
+      }
+      
+      // Detect HTML format
+      if (text.includes('<html') || text.includes('<!DOCTYPE') || 
+          (text.includes('<p>') && text.includes('<div>'))) {
+        setError('❌ HTML format detected. Please save as plain text (.txt) instead.');
+        return;
+      }
+      
+      // Detect Word/DOCX format (binary)
+      if (text.includes('PK\x03\x04') || text.substring(0, 4) === 'PK\x03\x04') {
+        setError('❌ Word document detected. Please save as plain text (.txt):\n\n• Open in Word → File → Save As → File Format: Plain Text (.txt)');
+        return;
+      }
+      
+      // Check if text has weird encoding characters
+      if (text.includes('\x00') || /[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(text)) {
+        setError('❌ File contains binary data or special encoding. Please ensure it\'s saved as UTF-8 plain text.');
+        return;
+      }
+      
+      // Clean up the text
+      text = text.trim();
+      
+      // Check minimum length
+      if (text.length < 100) {
+        setError('Resume is too short (less than 100 characters). Please upload a complete resume.');
+        return;
+      }
+      
+      // Check if it looks like actual resume content
+      const hasName = /[A-Z][a-z]+ [A-Z][a-z]+/.test(text.substring(0, 200));
+      const hasEmail = /\S+@\S+\.\S+/.test(text);
+      const hasCommonWords = /experience|education|skills|work|employment/i.test(text);
+      
+      if (!hasCommonWords && text.length < 500) {
+        setError('⚠️ This doesn\'t look like a complete resume. Please ensure you\'ve uploaded the right file.');
+        return;
+      }
+      
+      console.log('✓ Resume validated successfully');
+      console.log('Length:', text.length, 'chars');
+      console.log('First 100 chars:', text.substring(0, 100));
+      
       setResume({ text, filename: file.name });
     };
 
-    reader.readAsText(file);
+    reader.onerror = () => {
+      setError('Failed to read file. Please try again or try a different file.');
+    };
+
+    // Read as text with UTF-8 encoding
+    reader.readAsText(file, 'UTF-8');
   };
 
   const analyzeResume = async (e) => {
@@ -173,22 +241,23 @@ const App = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 space-y-6">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-3">
-            Upload Your Resume
+            Upload Your Resume (Plain Text Only)
           </label>
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
             <input
               type="file"
               onChange={handleFileUpload}
-              accept=".txt"
+              accept=".txt,text/plain"
               className="hidden"
               id="resume-upload"
             />
             <label htmlFor="resume-upload" className="cursor-pointer">
               <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-gray-600 font-medium">
                 {resume.filename || 'Click to upload or drag and drop'}
               </p>
-              <p className="text-xs text-gray-500 mt-1">TXT format (max 5MB)</p>
+              <p className="text-xs text-gray-500 mt-2">Plain text (.txt) format only</p>
+              <p className="text-xs text-gray-400 mt-1">Max file size: 5MB</p>
             </label>
           </div>
           {resume.filename && (
@@ -197,6 +266,15 @@ const App = () => {
               <span>Uploaded: {resume.filename}</span>
             </div>
           )}
+          
+          <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <p className="text-xs font-semibold text-blue-900 mb-1">📄 How to convert to plain text:</p>
+            <ul className="text-xs text-blue-800 space-y-1 ml-4">
+              <li>• <strong>Mac:</strong> TextEdit → Format → Make Plain Text</li>
+              <li>• <strong>Windows:</strong> Word → Save As → Plain Text (.txt)</li>
+              <li>• <strong>Google Docs:</strong> File → Download → Plain Text (.txt)</li>
+            </ul>
+          </div>
         </div>
 
         <div>
